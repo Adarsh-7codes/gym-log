@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set editing = log is defined and log %}
+{% block title %}{{ 'Edit log' if editing else 'New log' }} · Gym Log{% endblock %}
+{% block nav_newlog %}{{ '' if editing else 'active' }}{% endblock %}
+{% block content %}
+<h1>{{ 'Edit workout' if editing else 'Log a workout' }}</h1>
+<p class="subtitle">{{ 'Update this logged set.' if editing else 'Record a set of an exercise.' }}</p>
+
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+<div class="panel">
+  <form method="post" action="{{ ('/logs/' ~ log.id ~ '/edit') if editing else '/logs/new' }}">
+    {% if is_trainer and not editing %}
+    <div class="field">
+      <label for="user_id">Member <span class="muted">(leave as yourself to log your own)</span></label>
+      <select id="user_id" name="user_id">
+        <option value="">Myself ({{ current_user.name }})</option>
+        {% for m in members %}
+          {% if m.id != current_user.id %}
+          <option value="{{ m.id }}">{{ m.name }} ({{ m.role.value }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="row">
+      <div class="field inline">
+        <label for="exercise_id">Exercise</label>
+        <select id="exercise_id" name="exercise_id" required>
+          {% if exercises %}
+            {% for ex in exercises %}
+            <option value="{{ ex.id }}" {% if editing and log.exercise_id == ex.id %}selected{% endif %}>{{ ex.name }}</option>
+            {% endfor %}
+          {% else %}
+            <option value="" disabled selected>No exercises yet</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="field inline" style="max-width:200px">
+        <label for="log_date">Date</label>
+        <input id="log_date" type="date" name="log_date" value="{{ log.date.isoformat() if editing else today }}" required>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <div class="field inline">
+        <label for="weight">Weight</label>
+        <input id="weight" type="number" step="any" name="weight" placeholder="e.g. 100" value="{{ log.weight if editing and log.weight is not none else '' }}">
+      </div>
+      <div class="field inline">
+        <label for="reps">Reps</label>
+        <input id="reps" type="number" name="reps" placeholder="e.g. 5" value="{{ log.reps if editing and log.reps is not none else '' }}">
+      </div>
+      <div class="field inline">
+        <label for="sets">Sets</label>
+        <input id="sets" type="number" name="sets" placeholder="e.g. 3" value="{{ log.sets if editing and log.sets is not none else '' }}">
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <div class="field inline" style="max-width:220px">
+        <label for="feeling">How did it feel?</label>
+        <select id="feeling" name="feeling">
+          {% set cur = log.feeling.value if editing and log.feeling else '' %}
+          <option value="" {% if not cur %}selected{% endif %}>— not set —</option>
+          <option value="easy" {% if cur == 'easy' %}selected{% endif %}>Easy</option>
+          <option value="moderate" {% if cur == 'moderate' %}selected{% endif %}>Moderate</option>
+          <option value="tough" {% if cur == 'tough' %}selected{% endif %}>Tough</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:16px">
+      <label for="next_action">Next action <span class="muted">(what to try next time)</span></label>
+      <input id="next_action" type="text" name="next_action" placeholder="e.g. add 5kg next session" value="{{ log.next_action if editing and log.next_action else '' }}">
+    </div>
+    <div class="field">
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes" placeholder="How did it feel?">{{ log.notes if editing and log.notes else '' }}</textarea>
+    </div>
+
+    <div class="row" style="justify-content:flex-start;gap:10px">
+      <button type="submit" {% if not exercises %}disabled{% endif %}>{{ 'Save changes' if editing else 'Save log' }}</button>
+      <a class="btn ghost" href="/dashboard">Cancel</a>
+    </div>
+    {% if not exercises %}
+    <p class="muted" style="margin-top:14px">
+      {% if is_trainer %}Add an exercise on the <a href="/exercises">Exercises</a> page first.
+      {% else %}Your trainer hasn't added any exercises yet.{% endif %}
+    </p>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Planner · Gym Log{% endblock %}
+{% block nav_planner %}active{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <div>
+    <h1>Weekly planner</h1>
+    <p class="subtitle" style="margin:0">
+      {% if editing_other %}Editing <strong>{{ target_user.name }}</strong>'s week.{% else %}Your training split — set a focus per day and plan exercises.{% endif %}
+    </p>
+  </div>
+  {% if is_trainer %}
+  <form method="get" action="/planner" style="margin:0">
+    <select name="user_id" onchange="this.form.submit()" style="max-width:240px">
+      <option value="">My planner ({{ current_user.name }})</option>
+      {% for m in members %}
+        {% if m.id != current_user.id %}
+        <option value="{{ m.id }}" {% if selected_user_id == m.id %}selected{% endif %}>{{ m.name }} ({{ m.role.value }})</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+  </form>
+  {% endif %}
+</div>
+
+<div class="grid7">
+  {% for d in days %}
+  <div class="daycard">
+    <h3>{{ d.name }}</h3>
+
+    <form method="post" action="/planner/{{ d.weekday }}/focus" class="miniform" style="align-items:center">
+      <input type="hidden" name="user_id" value="{{ target_user.id }}">
+      <input type="text" name="focus" placeholder="Focus e.g. Chest & Back"
+             value="{{ d.day.focus if d.day and d.day.focus else '' }}" style="flex:1;min-width:120px">
+      <button type="submit" class="btn ghost">Save</button>
+    </form>
+
+    {% if d.day and d.day.items %}
+    <div style="display:flex;flex-direction:column;gap:6px">
+      {% for item in d.day.items %}
+      <div class="planitem">
+        <div>
+          <div>{{ item.exercise.name }}</div>
+          <div class="meta">
+            {{ item.target_sets if item.target_sets is not none else '–' }}×{{ item.target_reps if item.target_reps is not none else '–' }}
+            {% if item.target_weight is not none %} @ {{ item.target_weight }}{% endif %}
+          </div>
+        </div>
+        <form method="post" action="/planner/item/{{ item.id }}/delete" style="margin:0">
+          <input type="hidden" name="user_id" value="{{ target_user.id }}">
+          <button type="submit" class="btn danger" style="padding:4px 9px">✕</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" style="font-size:13px;margin:0">No exercises planned.</p>
+    {% endif %}
+
+    {% if exercises %}
+    <form method="post" action="/planner/{{ d.weekday }}/item" class="miniform">
+      <input type="hidden" name="user_id" value="{{ target_user.id }}">
+      <select name="exercise_id" required style="flex:1;min-width:120px">
+        {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.name }}</option>{% endfor %}
+      </select>
+      <input type="number" name="target_sets" placeholder="sets" style="width:56px" min="0">
+      <input type="number" name="target_reps" placeholder="reps" style="width:56px" min="0">
+      <input type="number" name="target_weight" placeholder="kg" step="any" style="width:60px" min="0">
+      <button type="submit">Add</button>
+    </form>
+    {% else %}
+    <p class="muted" style="font-size:12px;margin:0">
+      {% if is_trainer %}Add exercises on the <a href="/exercises">Exercises</a> page to plan them.
+      {% else %}No exercises available yet — ask your trainer to add some.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

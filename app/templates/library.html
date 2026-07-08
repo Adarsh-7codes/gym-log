@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Exercise Library · Gym Log{% endblock %}
+{% block nav_library %}active{% endblock %}
+{% block content %}
+<h1>Exercise Library</h1>
+<p class="subtitle">Pick the exercises for each body part. They stay in your routine and show up every time you log — no need to re-pick.</p>
+
+{% if not body_parts %}
+<div class="panel"><div class="empty">No exercises available yet.</div></div>
+{% else %}
+
+<div class="tabs">
+  {% for bp in body_parts %}
+  <a href="/library?part={{ bp.value }}" class="tab {% if active == bp %}active{% endif %}">{{ bp.value }}</a>
+  {% endfor %}
+</div>
+
+{% set exercises = library[active] %}
+<form method="post" action="/library/{{ active.value }}">
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)">
+      <strong style="text-transform:capitalize">{{ active.value }} exercises</strong>
+      <span class="muted" style="font-size:13px">Beginner → Advanced. Tick the ones you want.</span>
+    </div>
+    {% for ex in exercises %}
+    <label class="exrow">
+      <input type="checkbox" name="exercise_ids" value="{{ ex.id }}" {% if ex.id in routine_ids %}checked{% endif %}>
+      <span class="ex-main">
+        <span class="ex-name">{{ ex.name }}</span>
+        {% if ex.id in routine_ids %}<span class="inroutine">· in routine</span>{% endif %}
+        <span class="ex-meta">
+          {% if ex.equipment %}{{ ex.equipment }}{% endif %}
+          {% if ex.instructions %} — {{ ex.instructions }}{% endif %}
+        </span>
+      </span>
+      {% if ex.difficulty %}<span class="diff {{ ex.difficulty.value }}">{{ ex.difficulty.value }}</span>{% endif %}
+    </label>
+    {% endfor %}
+  </div>
+  <div class="row" style="margin-top:16px;justify-content:space-between;align-items:center">
+    <span class="muted" style="font-size:13px">Ticking a box adds it; unticking removes it (your past logs stay).</span>
+    <button type="submit">Save {{ active.value }} routine</button>
+  </div>
+</form>
+
+<p style="margin-top:20px"><a href="/logs/new">Go log a workout →</a></p>
+{% endif %}
+{% endblock %}

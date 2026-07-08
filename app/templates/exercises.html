@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Exercises · Gym Log{% endblock %}
+{% block nav_exercises %}active{% endblock %}
+{% block content %}
+<h1>Exercises</h1>
+<p class="subtitle">The library members choose from. Categorize each one so it appears under the right body-part tab.</p>
+
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+<div class="panel" style="margin-bottom:20px">
+  <form method="post" action="/exercises">
+    <div class="row">
+      <div class="field inline" style="min-width:180px">
+        <label for="name">Name</label>
+        <input id="name" type="text" name="name" placeholder="e.g. Back Squat" required>
+      </div>
+      <div class="field inline" style="max-width:170px">
+        <label for="body_part">Body part</label>
+        <select id="body_part" name="body_part">
+          {% for bp in body_parts %}<option value="{{ bp.value }}">{{ bp.value|capitalize }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field inline" style="max-width:170px">
+        <label for="difficulty">Difficulty</label>
+        <select id="difficulty" name="difficulty">
+          {% for d in difficulties %}<option value="{{ d.value }}">{{ d.value|capitalize }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field inline" style="max-width:170px">
+        <label for="equipment">Equipment</label>
+        <input id="equipment" type="text" name="equipment" placeholder="e.g. Barbell">
+      </div>
+    </div>
+    <div class="field" style="margin-top:14px">
+      <label for="instructions">Short instructions <span class="muted">(optional)</span></label>
+      <input id="instructions" type="text" name="instructions" placeholder="One-line how-to">
+    </div>
+    <button type="submit">Add exercise</button>
+  </form>
+</div>
+
+<div class="panel" style="padding:0;overflow:hidden">
+  {% if exercises %}
+  <table>
+    <thead><tr><th>Name</th><th>Body part</th><th>Difficulty</th><th>Equipment</th><th></th></tr></thead>
+    <tbody>
+      {% for ex in exercises %}
+      <tr>
+        <td data-label="Name">{{ ex.name }}</td>
+        <td data-label="Body part" style="text-transform:capitalize">{{ ex.body_part.value if ex.body_part else '—' }}</td>
+        <td data-label="Difficulty">{% if ex.difficulty %}<span class="diff {{ ex.difficulty.value }}">{{ ex.difficulty.value }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="Equipment" class="muted">{{ ex.equipment or '—' }}</td>
+        <td class="actions" style="text-align:right">
+          <form method="post" action="/exercises/{{ ex.id }}/delete" style="margin:0"
+                onsubmit="return confirm('Delete {{ ex.name }}? Existing logs keep their reference.')">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No exercises yet. Add your first one above.</div>
+  {% endif %}
+</div>
+{% endblock %}

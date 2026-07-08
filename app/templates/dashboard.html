@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Gym Log{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block content %}
+
+{% if show_roster %}
+{# ---------------- Trainer scan view: one row per member ---------------- #}
+{% set flagged_count = roster | selectattr('flagged') | list | length %}
+<div class="toolbar">
+  <div>
+    <h1>Members</h1>
+    <p class="subtitle" style="margin:0">
+      {% if flagged_count %}<strong style="color:var(--danger)">{{ flagged_count }} need attention</strong> — listed first.
+      {% else %}Everyone's on track.{% endif %}
+    </p>
+  </div>
+  <a class="btn ghost" href="/members">Manage accounts</a>
+</div>
+
+<div class="panel" style="padding:0;overflow:hidden">
+  {% if roster %}
+  <table>
+    <thead>
+      <tr><th>Member</th><th>Last session</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for s in roster %}
+      <tr class="clickrow" onclick="location.href='/dashboard?user_id={{ s.user.id }}'">
+        <td data-label="Member"><strong>{{ s.user.name }}</strong></td>
+        <td data-label="Last session">
+          {% if s.last_date %}{{ s.last_date.isoformat() }} <span class="muted">({{ s.days_since }}d ago)</span>
+          {% else %}<span class="muted">never</span>{% endif %}
+        </td>
+        <td data-label="Status">
+          {% if s.flagged %}
+            <span class="flag flag-red">⚑ Flagged</span>
+            <div class="muted" style="font-size:12px;margin-top:3px">{{ s.reasons | join('; ') }}</div>
+          {% else %}
+            <span class="flag flag-ok">On track</span>
+          {% endif %}
+        </td>
+        <td class="actions"><a class="btn ghost" href="/dashboard?user_id={{ s.user.id }}" style="padding:6px 12px;font-size:13px">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No members yet. Add one on the <a href="/members">Members</a> page.</div>
+  {% endif %}
+</div>
+
+{% else %}
+{# ---------------- Log view: a member's own logs, or a trainer viewing one member ---------------- #}
+{% if viewed_member %}
+<p style="margin:0 0 10px"><a href="/dashboard">← All members</a></p>
+{% else %}
+<div class="rolebanner {{ current_user.role.value }}">
+  <span class="badge {{ current_user.role.value }}">{{ current_user.role.value }}</span>
+  <span><strong>Member view</strong> — you see and manage only your own logs and planner.</span>
+</div>
+{% endif %}
+
+<div class="toolbar">
+  <div>
+    <h1>{% if viewed_member %}{{ viewed_member.name }}'s logs{% else %}Workout logs{% endif %}</h1>
+    <p class="subtitle" style="margin:0">
+      {% if viewed_member %}Everything {{ viewed_member.name }} has logged.{% else %}Your logged workouts.{% endif %}
+    </p>
+  </div>
+  <a class="btn" href="/logs/new">+ New log</a>
+</div>
+
+{% if viewed_member %}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">Routine</strong>
+  {% if routine %}
+  <div style="margin-top:10px">
+    {% for bp, exs in routine.items() %}
+    <div style="margin-bottom:6px"><span class="muted" style="text-transform:capitalize;font-size:12px;font-weight:700">{{ bp.value }}:</span>
+      {{ exs | map(attribute='name') | join(', ') }}</div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">No exercises in this member's routine yet.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<form method="get" action="/dashboard" class="panel" style="padding:16px;margin-bottom:20px">
+  {% if viewed_member %}<input type="hidden" name="user_id" value="{{ viewed_member.id }}">{% endif %}
+  <div class="row">
+    <div class="field inline" style="max-width:220px">
+      <label for="exercise_id">Exercise</label>
+      <select id="exercise_id" name="exercise_id">
+        <option value="">All exercises</option>
+        {% for ex in exercises %}
+        <option value="{{ ex.id }}" {% if selected_exercise_id == ex.id %}selected{% endif %}>{{ ex.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field inline" style="max-width:170px">
+      <label for="start_date">From</label>
+      <input id="start_date" type="date" name="start_date" value="{{ start_date }}">
+    </div>
+    <div class="field inline" style="max-width:170px">
+      <label for="end_date">To</label>
+      <input id="end_date" type="date" name="end_date" value="{{ end_date }}">
+    </div>
+    <div class="field inline" style="flex:0 0 auto"><button type="submit">Apply</button></div>
+    <div class="field inline" style="flex:0 0 auto">
+      <a class="btn ghost" href="{% if viewed_member %}/dashboard?user_id={{ viewed_member.id }}{% else %}/dashboard{% endif %}">Reset</a>
+    </div>
+  </div>
+</form>
+
+<div class="panel" style="padding:0;overflow:hidden">
+  {% if logs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Exercise</th><th>Weight</th><th>Reps</th><th>Sets</th><th>Feel</th><th>By</th><th>Notes</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td data-label="Date">{{ log.date.isoformat() }}</td>
+        <td data-label="Exercise">
+          {{ log.exercise.name }}
+          {% if log.exercise_id in stalled_ids %}<span class="flag flag-red" style="margin-left:6px">⚑ stalled</span>{% endif %}
+        </td>
+        <td data-label="Weight">{% if log.weight is not none %}{{ log.weight }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="Reps">{% if log.reps is not none %}{{ log.reps }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="Sets">{% if log.sets is not none %}{{ log.sets }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="Feel">{% if log.feeling %}<span class="feel {{ log.feeling.value }}">{{ log.feeling.value }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="By">{% if log.logged_by and log.logged_by.value == 'trainer' %}<span class="badge trainer" style="font-size:10px">trainer</span>{% else %}<span class="muted">self</span>{% endif %}</td>
+        <td data-label="Notes" class="muted">{{ log.notes or '' }}</td>
+        <td class="actions" style="text-align:right;white-space:nowrap">
+          <a class="btn ghost" href="/logs/{{ log.id }}/edit" style="padding:6px 12px;font-size:13px">Edit</a>
+          <form method="post" action="/logs/{{ log.id }}/delete" style="display:inline;margin:0"
+                onsubmit="return confirm('Delete this log?')">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No logs match. <a href="/logs/new">Log a workout →</a></div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

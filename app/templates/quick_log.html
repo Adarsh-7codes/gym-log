@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Log a set · Gym Log{% endblock %}
+{% block nav_newlog %}active{% endblock %}
+{% block content %}
+<h1>Log a set</h1>
+<p class="subtitle">Tap an exercise from your routine — your last weight is filled in, just adjust and save.</p>
+
+{% if saved %}<div class="ok-flash">✓ Saved. Log your next set below.</div>{% endif %}
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+{% if not routine %}
+<div class="panel">
+  <div class="empty">
+    Your routine is empty.<br>
+    <a href="/library">Add exercises from the Exercise Library →</a> and they'll appear here every time.
+  </div>
+</div>
+{% else %}
+<form method="post" action="/logs/new" id="qform" class="panel">
+  <input type="hidden" name="log_date" value="{{ today }}">
+  <input type="hidden" name="exercise_id" id="exercise_id" value="">
+
+  <div class="exlist" id="exlist">
+    {% for bp, exs in routine.items() %}
+    <div class="ex-group-label" style="text-transform:capitalize;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.04em;margin:6px 2px 2px">{{ bp.value }}</div>
+    {% for ex in exs %}
+    {% set L = last[ex.id] if ex.id in last else None %}
+    <button type="button" class="exopt" data-id="{{ ex.id }}" data-name="{{ ex.name }}"
+            data-weight="{{ L.weight if L and L.weight is not none else '' }}"
+            data-reps="{{ L.reps if L and L.reps is not none else '' }}">
+      <span class="exname">{{ ex.name }}</span>
+      {% if L and L.weight is not none %}<span class="lasthint">last {{ L.weight }}{% if L.reps %}×{{ L.reps }}{% endif %}</span>
+      {% else %}<span class="lasthint muted">no history</span>{% endif %}
+    </button>
+    {% endfor %}
+    {% endfor %}
+  </div>
+  <p class="muted" style="font-size:12px;margin:0 0 14px"><a href="/library">Manage routine ↗</a></p>
+
+  <div id="setfields" hidden>
+    <div class="picked-bar">Logging: <strong id="pickedName"></strong></div>
+
+    <div class="steprow">
+      <div class="stepper">
+        <span class="steplabel">Weight</span>
+        <div class="stepbox">
+          <button type="button" class="stepbtn" data-step="-2.5" data-target="weight">−</button>
+          <input type="number" step="0.5" min="0" inputmode="decimal" name="weight" id="weight" placeholder="0">
+          <button type="button" class="stepbtn" data-step="2.5" data-target="weight">+</button>
+        </div>
+      </div>
+      <div class="stepper">
+        <span class="steplabel">Reps</span>
+        <div class="stepbox">
+          <button type="button" class="stepbtn" data-step="-1" data-target="reps">−</button>
+          <input type="number" step="1" min="0" inputmode="numeric" name="reps" id="reps" placeholder="0">
+          <button type="button" class="stepbtn" data-step="1" data-target="reps">+</button>
+        </div>
+      </div>
+      <div class="stepper">
+        <span class="steplabel">Sets</span>
+        <div class="stepbox">
+          <button type="button" class="stepbtn" data-step="-1" data-target="sets">−</button>
+          <input type="number" step="1" min="0" inputmode="numeric" name="sets" id="sets" value="1">
+          <button type="button" class="stepbtn" data-step="1" data-target="sets">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field" style="margin:4px 0 0">
+      <span class="steplabel" style="display:block;margin-bottom:8px">How did it feel?</span>
+      <div class="feelbtns">
+        <input type="radio" name="feeling" value="easy" id="f-easy"><label for="f-easy" class="feelbtn easy">Easy</label>
+        <input type="radio" name="feeling" value="moderate" id="f-mod"><label for="f-mod" class="feelbtn moderate">Moderate</label>
+        <input type="radio" name="feeling" value="tough" id="f-tough"><label for="f-tough" class="feelbtn tough">Tough</label>
+      </div>
+    </div>
+
+    <button type="submit" class="bigsave">Save set</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var opts = Array.prototype.slice.call(document.querySelectorAll('.exopt'));
+  var setfields = document.getElementById('setfields');
+  var exId = document.getElementById('exercise_id');
+  var pickedName = document.getElementById('pickedName');
+  var weight = document.getElementById('weight');
+  var reps = document.getElementById('reps');
+
+  opts.forEach(function (o) {
+    o.addEventListener('click', function () {
+      opts.forEach(function (x) { x.classList.remove('selected'); });
+      o.classList.add('selected');
+      exId.value = o.getAttribute('data-id');
+      pickedName.textContent = o.getAttribute('data-name');
+      weight.value = o.getAttribute('data-weight') || '';   // auto-carry last session's weight
+      reps.value = o.getAttribute('data-reps') || '';
+      setfields.hidden = false;
+      setfields.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  });
+
+  document.querySelectorAll('.stepbtn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var input = document.getElementById(b.getAttribute('data-target'));
+      var step = parseFloat(b.getAttribute('data-step'));
+      var val = parseFloat(input.value);
+      if (isNaN(val)) val = 0;
+      val = Math.round((val + step) * 100) / 100;
+      if (val < 0) val = 0;
+      input.value = val;
+    });
+  });
+
+  document.getElementById('qform').addEventListener('submit', function (e) {
+    if (!exId.value) { e.preventDefault(); alert('Pick an exercise first.'); }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

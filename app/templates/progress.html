@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Progress · Gym Log{% endblock %}
+{% block nav_progress %}active{% endblock %}
+{% block content %}
+<h1>Progress</h1>
+<p class="subtitle">Weight logged per session for a single exercise, over time.</p>
+
+<form method="get" action="/progress" class="panel" style="padding:16px;margin-bottom:20px">
+  <div class="row">
+    {% if is_trainer %}
+    <div class="field inline" style="max-width:240px">
+      <label for="user_id">Member</label>
+      <select id="user_id" name="user_id">
+        <option value="">Myself ({{ current_user.name }})</option>
+        {% for m in members %}
+          {% if m.id != current_user.id %}
+          <option value="{{ m.id }}" {% if selected_user_id == m.id %}selected{% endif %}>{{ m.name }} ({{ m.role.value }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="field inline" style="max-width:280px">
+      <label for="exercise_id">Exercise</label>
+      <select id="exercise_id" name="exercise_id" required>
+        <option value="" {% if not selected_exercise_id %}selected{% endif %} disabled>Choose an exercise…</option>
+        {% for ex in exercises %}
+        <option value="{{ ex.id }}" {% if selected_exercise_id == ex.id %}selected{% endif %}>{{ ex.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field inline" style="flex:0 0 auto">
+      <button type="submit">Show</button>
+    </div>
+  </div>
+</form>
+
+<div class="panel">
+  {% if not has_selection %}
+    <div class="empty">Pick an exercise above to see the progress chart.</div>
+  {% elif chart.points %}
+    <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" width="100%" style="max-width:100%;height:auto;display:block"
+         xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Weight over time">
+      <!-- horizontal gridlines + y labels -->
+      {% for t in chart.y_ticks %}
+      <line x1="36" y1="{{ t.y }}" x2="{{ chart.width - 12 }}" y2="{{ t.y }}" stroke="var(--border)" stroke-width="1"/>
+      <text x="4" y="{{ t.y + 4 }}" fill="var(--muted)" font-size="11">{{ t.label }}</text>
+      {% endfor %}
+      <!-- the line -->
+      <polyline points="{{ chart.polyline }}" fill="none" stroke="var(--accent)" stroke-width="2.5"
+                stroke-linejoin="round" stroke-linecap="round"/>
+      <!-- points -->
+      {% for p in chart.points %}
+      <circle cx="{{ p.x }}" cy="{{ p.y }}" r="4" fill="var(--accent)">
+        <title>{{ p.date }}: {{ p.weight }}</title>
+      </circle>
+      {% endfor %}
+    </svg>
+    <p class="muted" style="margin:14px 0 0;font-size:13px">
+      {{ chart.points|length }} session{{ '' if chart.points|length == 1 else 's' }} with a recorded weight.
+      Hover a point for its date and value.
+    </p>
+  {% else %}
+    <div class="empty">No logged sessions with a weight for this exercise yet.</div>
+  {% endif %}
+</div>
+
+<h1 style="margin-top:36px;font-size:20px">Overview</h1>
+<p class="subtitle">Across all your logged workouts.</p>
+
+<div class="row" style="align-items:stretch;gap:20px">
+  <div class="panel" style="flex:1;min-width:300px">
+    <h3 style="margin:0 0 4px">Weekly training volume</h3>
+    <p class="chart-caption" style="margin:0 0 14px">Sum of weight × reps × sets, per week (last 8).</p>
+    {% if volume_chart.bars %}
+    <svg viewBox="0 0 {{ volume_chart.width }} {{ volume_chart.height }}" width="100%" style="height:auto;display:block"
+         xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Weekly volume">
+      <line x1="36" y1="{{ volume_chart.baseline }}" x2="{{ volume_chart.width - 12 }}" y2="{{ volume_chart.baseline }}" stroke="var(--border)"/>
+      {% for b in volume_chart.bars %}
+      <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="3" fill="var(--accent)">
+        <title>Week {{ b.label }}: {{ b.value }}</title>
+      </rect>
+      <text x="{{ b.x + b.w / 2 }}" y="{{ volume_chart.baseline + 16 }}" fill="var(--muted)" font-size="10" text-anchor="middle">{{ b.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div class="empty" style="padding:24px">Log weight, reps and sets to see volume here.</div>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="flex:1;min-width:300px">
+    <h3 style="margin:0 0 4px">How sessions felt</h3>
+    <p class="chart-caption" style="margin:0 0 14px">Count of sets by reported effort.</p>
+    {% if has_feelings %}
+    <svg viewBox="0 0 {{ feeling_chart.width }} {{ feeling_chart.height }}" width="100%" style="height:auto;display:block"
+         xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Feeling breakdown">
+      <line x1="36" y1="{{ feeling_chart.baseline }}" x2="{{ feeling_chart.width - 12 }}" y2="{{ feeling_chart.baseline }}" stroke="var(--border)"/>
+      {% set colors = {'Easy':'var(--ok)','Moderate':'#f0b100','Tough':'var(--danger)'} %}
+      {% for b in feeling_chart.bars %}
+      <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="3" fill="{{ colors[b.label] }}">
+        <title>{{ b.label }}: {{ b.value }}</title>
+      </rect>
+      <text x="{{ b.x + b.w / 2 }}" y="{{ b.y - 6 }}" fill="var(--muted)" font-size="11" text-anchor="middle">{{ b.value }}</text>
+      <text x="{{ b.x + b.w / 2 }}" y="{{ feeling_chart.baseline + 16 }}" fill="var(--muted)" font-size="10" text-anchor="middle">{{ b.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div class="empty" style="padding:24px">Set a "feeling" when logging to see this breakdown.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

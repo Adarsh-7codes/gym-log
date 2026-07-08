@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Members · Gym Log{% endblock %}
+{% block nav_members %}active{% endblock %}
+{% block content %}
+<h1>Members</h1>
+<p class="subtitle">Everyone with an account, and their logging activity.</p>
+
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+<div class="panel" style="margin-bottom:20px">
+  <h3 style="margin:0 0 12px">Add a member account</h3>
+  <form method="post" action="/members" class="row" style="align-items:flex-end">
+    <div class="field inline" style="max-width:200px">
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" required>
+    </div>
+    <div class="field inline" style="max-width:240px">
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" required>
+    </div>
+    <div class="field inline" style="max-width:200px">
+      <label for="password">Temp password</label>
+      <input id="password" type="text" name="password" required minlength="6">
+    </div>
+    <button type="submit">Create member</button>
+  </form>
+  <p class="muted" style="margin:12px 0 0;font-size:13px">
+    Members can also self-register at <a href="/register">/register</a> and log in themselves.
+  </p>
+</div>
+
+<div class="panel" style="padding:0;overflow:hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Logs</th>
+        <th>Last logged</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td data-label="Name">{{ row.user.name }}</td>
+        <td data-label="Email" class="muted">{{ row.user.email }}</td>
+        <td data-label="Role"><span class="badge {{ row.user.role.value }}">{{ row.user.role.value }}</span></td>
+        <td data-label="Logs">{{ row.log_count }}</td>
+        <td data-label="Last logged">{% if row.last_date %}{{ row.last_date.isoformat() }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="actions" style="text-align:right;white-space:nowrap">
+          <a class="btn ghost" href="/dashboard?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">View logs</a>
+          <a class="btn ghost" href="/progress?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">Progress</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

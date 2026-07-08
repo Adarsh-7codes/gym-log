@@ -1,0 +1,31 @@
+# Render Blueprint — one-click deploy of the Gym Log app + its own Postgres DB.
+# In Render: New + -> Blueprint -> pick this repo. Render reads this file and
+# creates BOTH the web service and a dedicated free Postgres database, and wires
+# DATABASE_URL between them automatically.
+
+databases:
+  - name: gymlog-db          # the LIVE/DEMO database (separate from your laptop's gym.db)
+    plan: free
+    databaseName: gymlog
+    user: gymlog
+
+services:
+  - type: web
+    name: gymlog             # your service; URL becomes https://gymlog.onrender.com (name may vary)
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /login   # returns 200 without auth -> good liveness probe
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:          # auto-filled from the gymlog-db above; you never type it
+          name: gymlog-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true    # Render generates a strong random secret; never in git
+      - key: COOKIE_SECURE
+        value: "true"          # Render serves HTTPS, so the auth cookie is HTTPS-only
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "10080"         # 7 days

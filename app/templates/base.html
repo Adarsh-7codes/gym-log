@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Gym Log{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1e222b;
+      --border: #2a2f3a;
+      --text: #e7e9ee;
+      --muted: #99a0ad;
+      --accent: #4f8cff;
+      --accent-2: #3b6fd6;
+      --danger: #ff5c68;
+      --ok: #34d399;
+      --trainer: #e8b53d;   /* gold — trainers stand out from the app's blue */
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header.topbar {
+      display: flex; align-items: center; gap: 20px;
+      padding: 14px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      border-top: 3px solid transparent;   /* role accent bar */
+      position: sticky; top: 0; z-index: 10;
+    }
+    header.topbar.trainer { border-top-color: var(--trainer); }
+    header.topbar.member { border-top-color: var(--accent); }
+    .brand { font-weight: 700; font-size: 18px; color: var(--text); }
+    .brand span { color: var(--accent); }
+    .topnav { display: flex; align-items: center; gap: 16px; margin-left: auto; }
+    .topnav > a { color: var(--muted); font-size: 14px; font-weight: 500; }
+    .topnav > a.active, .topnav > a:hover { color: var(--text); text-decoration: none; }
+    /* user: name on top, role badge underneath */
+    .userblock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; gap: 3px; }
+    .userblock .uname { font-size: 14px; font-weight: 600; color: var(--text); }
+    /* dropdown menu — native <details>, no JS */
+    .menu { position: relative; }
+    .menu > summary {
+      list-style: none; cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 38px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--panel-2); color: var(--text); font-size: 18px; line-height: 1;
+    }
+    .menu > summary::-webkit-details-marker { display: none; }
+    .menu > summary:hover { background: var(--border); }
+    .menu[open] > summary { border-color: var(--accent); }
+    .menu-panel {
+      position: absolute; right: 0; top: calc(100% + 8px); z-index: 20;
+      min-width: 190px; display: flex; flex-direction: column; gap: 2px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.45);
+    }
+    .menu-panel a, .menu-panel button {
+      display: block; width: 100%; text-align: left; background: transparent; border: none;
+      color: var(--text); font-size: 14px; font-weight: 500; padding: 10px 12px; border-radius: 7px; cursor: pointer;
+    }
+    .menu-panel a.active { color: var(--accent); }
+    .menu-panel a:hover, .menu-panel button:hover { background: var(--panel-2); text-decoration: none; }
+    .menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+    .menu-panel button.logout { color: var(--danger); }
+    .badge {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
+      padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    /* filled labels so the role reads at a glance: gold trainer, blue member */
+    .badge.trainer { color: #241a00; background: var(--trainer); border-color: var(--trainer); }
+    .badge.member { color: #fff; background: var(--accent); border-color: var(--accent); }
+    /* "Trainer view / Member view" banner on pages */
+    .rolebanner {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      font-size: 13px; color: var(--muted);
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+      border-radius: 8px; padding: 10px 14px; margin-bottom: 20px;
+    }
+    .rolebanner.trainer { border-left-color: var(--trainer); }
+    .rolebanner strong { color: var(--text); }
+    .feel { font-size: 11px; text-transform: capitalize; padding: 2px 9px; border-radius: 999px; border: 1px solid; font-weight: 600; }
+    .feel.easy { color: var(--ok); border-color: #1f7a5a; background: rgba(52,211,153,.10); }
+    .feel.moderate { color: #f0b100; border-color: #8a6b00; background: rgba(240,177,0,.10); }
+    .feel.tough { color: var(--danger); border-color: #8a2f36; background: rgba(255,92,104,.10); }
+    /* planner */
+    .grid7 { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+    .daycard { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .daycard h3 { margin: 0; font-size: 15px; }
+    .daycard .focus { color: var(--accent); font-size: 13px; font-weight: 600; }
+    .planitem { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+    .planitem .meta { color: var(--muted); font-size: 12px; }
+    .miniform { display: flex; flex-wrap: wrap; gap: 6px; }
+    .miniform input, .miniform select { padding: 7px 8px; font-size: 12px; }
+    .miniform button { padding: 7px 12px; font-size: 12px; }
+    .chart-caption { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+    h1 { font-size: 24px; margin: 0 0 4px; }
+    .subtitle { color: var(--muted); margin: 0 0 24px; }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px;
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input, select, textarea {
+      width: 100%; padding: 10px 12px; background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+      font-size: 14px; font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 64px; }
+    .field { margin-bottom: 16px; }
+    .field.inline { flex: 1; min-width: 120px; margin-bottom: 0; }
+    button, .btn {
+      display: inline-block; padding: 10px 18px; border: none; border-radius: 8px;
+      background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    button:hover, .btn:hover { background: var(--accent-2); text-decoration: none; }
+    .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn.ghost:hover { background: var(--panel-2); }
+    .btn.danger { background: transparent; border: 1px solid var(--border); color: var(--danger); padding: 6px 12px; font-size: 13px; }
+    .btn.danger:hover { background: rgba(255,92,104,.1); border-color: var(--danger); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: none; }
+    .muted { color: var(--muted); }
+    .empty { text-align: center; padding: 48px 24px; color: var(--muted); }
+    .alert {
+      padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px;
+      background: rgba(255,92,104,.12); border: 1px solid var(--danger); color: #ffb3b8;
+    }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+    .authcard { max-width: 400px; margin: 8vh auto 0; }
+    .authcard h1 { text-align: center; }
+    .center-note { text-align: center; margin-top: 18px; color: var(--muted); font-size: 14px; }
+    /* Trainer | Member segmented toggle on the login page */
+    .segmented { display: flex; gap: 4px; padding: 4px; margin-bottom: 20px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; }
+    .segmented input { position: absolute; opacity: 0; pointer-events: none; }
+    .segmented label { flex: 1; text-align: center; cursor: pointer; padding: 9px 12px;
+      border-radius: 7px; font-weight: 600; font-size: 14px; color: var(--muted); }
+    .segmented input.t:checked + label { background: var(--trainer); color: #241a00; }
+    .segmented input.m:checked + label { background: var(--accent); color: #fff; }
+
+    /* roster (trainer scan view) */
+    .clickrow { cursor: pointer; }
+    .clickrow:hover td { background: var(--panel-2); }
+    .flag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+    .flag-red { color: #ffb3b8; background: rgba(255,92,104,.14); border: 1px solid var(--danger); }
+    .flag-ok { color: var(--ok); background: rgba(52,211,153,.10); border: 1px solid #1f7a5a; }
+
+    /* quick-log (fast member logging) */
+    .ok-flash { background: rgba(52,211,153,.12); border: 1px solid #1f7a5a; color: #7ff0c8;
+      padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; font-weight: 600; }
+    .exlist { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; margin-bottom: 16px; }
+    .exopt { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left;
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      border-radius: 10px; padding: 14px 16px; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .exopt:hover { border-color: var(--accent); }
+    .exopt.selected { border-color: var(--accent); background: rgba(79,140,255,.12); }
+    .exopt .lasthint { font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+    .picked-bar { font-size: 14px; color: var(--muted); margin-bottom: 14px; }
+    .picked-bar strong { color: var(--text); }
+    .steprow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .stepper { flex: 1; min-width: 130px; }
+    .steplabel { font-size: 13px; color: var(--muted); }
+    .stepbox { display: flex; align-items: stretch; gap: 8px; margin-top: 6px; }
+    .stepbox input { text-align: center; font-size: 20px; font-weight: 700; padding: 10px 4px; }
+    .stepbtn { width: 48px; min-width: 48px; font-size: 22px; line-height: 1; padding: 0;
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; }
+    .stepbtn:hover { background: var(--border); }
+    .feelbtns { display: flex; gap: 8px; }
+    .feelbtns input { position: absolute; opacity: 0; pointer-events: none; }
+    .feelbtn { flex: 1; text-align: center; padding: 11px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--panel-2); color: var(--muted); font-weight: 600; cursor: pointer; font-size: 14px; }
+    .feelbtns input:checked + .feelbtn.easy { background: rgba(52,211,153,.16); color: var(--ok); border-color: #1f7a5a; }
+    .feelbtns input:checked + .feelbtn.moderate { background: rgba(240,177,0,.16); color: #f0b100; border-color: #8a6b00; }
+    .feelbtns input:checked + .feelbtn.tough { background: rgba(255,92,104,.16); color: var(--danger); border-color: #8a2f36; }
+    .bigsave { width: 100%; margin-top: 20px; padding: 16px; font-size: 17px; border-radius: 12px; }
+
+    /* exercise library */
+    .tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 18px; -webkit-overflow-scrolling: touch; }
+    .tab { flex: 0 0 auto; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 14px; text-transform: capitalize; white-space: nowrap; }
+    .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .tab:hover { text-decoration: none; color: var(--text); }
+    .diff { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+    .diff.beginner { color: var(--ok); border-color: #1f7a5a; background: rgba(52,211,153,.10); }
+    .diff.intermediate { color: #f0b100; border-color: #8a6b00; background: rgba(240,177,0,.10); }
+    .diff.advanced { color: var(--danger); border-color: #8a2f36; background: rgba(255,92,104,.10); }
+    .exrow { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .exrow:last-child { border-bottom: none; }
+    .exrow input[type=checkbox] { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); }
+    .exrow .ex-main { flex: 1; min-width: 0; }
+    .exrow .ex-name { font-weight: 600; }
+    .exrow .ex-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .inroutine { font-size: 11px; font-weight: 700; color: var(--accent); }
+    .routine-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 13px; margin: 0 6px 6px 0; }
+    .routine-chip form { margin: 0; }
+    .routine-chip button { background: transparent; border: none; color: var(--danger); padding: 2px 6px; font-size: 15px; cursor: pointer; }
+
+    /* ---------- Mobile (phone-first: members log from the gym floor) ---------- */
+    @media (max-width: 720px) {
+      header.topbar { padding: 12px 16px; gap: 12px; }
+      .topnav { gap: 12px; }
+      .topnav > a { font-size: 15px; }
+      main { padding: 20px 16px 56px; }
+      h1 { font-size: 22px; }
+      .panel { padding: 18px; }
+      /* 16px keeps iOS Safari from zooming in when a field is focused */
+      input, select, textarea,
+      .miniform input, .miniform select, .miniform button { font-size: 16px; }
+    }
+
+    /* Tables reflow into stacked cards on phones (no more clipped columns) */
+    @media (max-width: 640px) {
+      table, tbody, tr, td { display: block; width: auto; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      tbody tr { border: 1px solid var(--border); border-radius: 10px; margin: 12px; padding: 4px 2px; }
+      td { border: none; display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 14px; text-align: right; }
+      td::before { content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; text-align: left; flex: 0 0 auto; }
+      td.actions { justify-content: flex-end; padding-top: 12px; }
+      td.actions::before { content: none; }
+    }
+  </style>
+</head>
+<body>
+  {% if current_user %}
+  <header class="topbar {{ current_user.role.value }}">
+    <div class="brand">Gym<span>Log</span></div>
+    <div class="topnav">
+      <a href="/dashboard" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
+      <div class="userblock">
+        <span class="uname">{{ current_user.name }}</span>
+        <span class="badge {{ current_user.role.value }}">{{ current_user.role.value }}</span>
+      </div>
+      <details class="menu">
+        <summary aria-label="Open menu" title="Menu">☰</summary>
+        <div class="menu-panel">
+          <a href="/planner" class="{% block nav_planner %}{% endblock %}">Planner</a>
+          {% if current_user.role.value != 'trainer' %}
+          <a href="/library" class="{% block nav_library %}{% endblock %}">Exercise Library</a>
+          {% endif %}
+          <a href="/logs/new" class="{% block nav_newlog %}{% endblock %}">New Log</a>
+          <a href="/progress" class="{% block nav_progress %}{% endblock %}">Progress</a>
+          {% if current_user.role.value == 'trainer' %}
+          <a href="/exercises" class="{% block nav_exercises %}{% endblock %}">Exercises</a>
+          <a href="/members" class="{% block nav_members %}{% endblock %}">Members</a>
+          {% endif %}
+          <div class="menu-sep"></div>
+          <form method="post" action="/logout" style="margin:0">
+            <button class="logout" type="submit">Log out</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </header>
+  {% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

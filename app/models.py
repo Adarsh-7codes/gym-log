@@ -1,0 +1,147 @@
+import enum
+from datetime import date
+
+from sqlalchemy import (
+    Column,
+    Date,
+    DateTime,
+    Enum as SAEnum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import relationship
+
+from app.database import Base
+
+
+class Role(str, enum.Enum):
+    trainer = "trainer"
+    member = "member"
+
+
+class Feeling(str, enum.Enum):
+    easy = "easy"
+    moderate = "moderate"
+    tough = "tough"
+
+
+class BodyPart(str, enum.Enum):
+    chest = "chest"
+    back = "back"
+    legs = "legs"
+    shoulders = "shoulders"
+    arms = "arms"
+    core = "core"
+
+
+class Difficulty(str, enum.Enum):
+    beginner = "beginner"
+    intermediate = "intermediate"
+    advanced = "advanced"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    # native_enum=False -> stored as a plain VARCHAR (+ CHECK) instead of a Postgres
+    # ENUM type, so adding a role later is a normal migration, not an ALTER TYPE.
+    role = Column(SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.member)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    logs = relationship("Log", back_populates="user", cascade="all, delete-orphan")
+
+
+class Exercise(Base):
+    __tablename__ = "exercises"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False, unique=True)
+    body_part = Column(SAEnum(BodyPart, native_enum=False, length=20), nullable=True, index=True)
+    difficulty = Column(SAEnum(Difficulty, native_enum=False, length=20), nullable=True, index=True)
+    equipment = Column(String(120), nullable=True)          # optional: what's needed
+    instructions = Column(Text, nullable=True)              # optional: short how-to
+    demo_url = Column(String(300), nullable=True)           # optional: image/video link
+
+    logs = relationship("Log", back_populates="exercise")
+
+
+class MemberRoutine(Base):
+    """A member's standing selection of exercises per body_part.
+
+    Persistent (not per-session): the member's permanent 'Chest Day' set, etc.
+    Removing a row here only stops the exercise appearing on future log days --
+    historical Log rows are a separate table and are never touched.
+    """
+
+    __tablename__ = "member_routines"
+    __table_args__ = (UniqueConstraint("user_id", "exercise_id", name="uq_routine_user_exercise"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False, index=True)
+    # denormalized for fast per-body_part queries (matches exercise.body_part at add time)
+    body_part = Column(SAEnum(BodyPart, native_enum=False, length=20), nullable=True, index=True)
+    date_added = Column(Date, nullable=False, default=date.today)
+
+    exercise = relationship("Exercise")
+
+
+class Log(Base):
+    __tablename__ = "logs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False)
+    weight = Column(Float, nullable=True)
+    reps = Column(Integer, nullable=True)
+    sets = Column(Integer, nullable=True)
+    next_action = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    # How the set felt from the member's perspective (easy/moderate/tough).
+    feeling = Column(SAEnum(Feeling, native_enum=False, length=20), nullable=True)
+    # Which role entered this log: the member themselves, or a trainer on their
+    # behalf. Distinct from user_id (whose log it is).
+    logged_by = Column(SAEnum(Role, native_enum=False, length=20), nullable=True)
+
+    user = relationship("User", back_populates="logs")
+    exercise = relationship("Exercise", back_populates="logs")
+
+
+class PlanDay(Base):
+    """One weekday of a member's recurring weekly plan (0=Mon .. 6=Sun)."""
+
+    __tablename__ = "plan_days"
+    __table_args__ = (UniqueConstraint("user_id", "weekday", name="uq_planday_user_weekday"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    weekday = Column(Integer, nullable=False)  # 0 = Monday ... 6 = Sunday
+    focus = Column(String(120), nullable=True)  # e.g. "Chest & Back"
+
+    items = relationship("PlanItem", back_populates="day", cascade="all, delete-orphan", order_by="PlanItem.id")
+
+
+class PlanItem(Base):
+    """A planned exercise on a weekday, with target sets/reps/weight."""
+
+    __tablename__ = "plan_items"
+
+    id = Column(Integer, primary_key=True)
+    plan_day_id = Column(Integer, ForeignKey("plan_days.id", ondelete="CASCADE"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False)
+    target_sets = Column(Integer, nullable=True)
+    target_reps = Column(Integer, nullable=True)
+    target_weight = Column(Float, nullable=True)
+
+    day = relationship("PlanDay", back_populates="items")
+    exercise = relationship("Exercise")

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Log in · Gym Log{% endblock %}
+{% block content %}
+<div class="authcard">
+  <div class="brand" style="text-align:center;font-size:22px;margin-bottom:8px">Gym<span style="color:var(--accent)">Log</span></div>
+  <div class="panel">
+    <h1>Welcome back</h1>
+    <p class="subtitle" style="text-align:center">Choose your role, then log in</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="segmented" role="tablist" aria-label="Log in as">
+        <input type="radio" id="role-trainer" name="role" value="trainer" class="t" {% if role == 'trainer' %}checked{% endif %}>
+        <label for="role-trainer">Trainer</label>
+        <input type="radio" id="role-member" name="role" value="member" class="m" {% if role != 'trainer' %}checked{% endif %}>
+        <label for="role-member">Member</label>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" required>
+      </div>
+      <button type="submit" style="width:100%">Log in</button>
+    </form>
+  </div>
+  <p class="center-note">No account yet? <a href="/register">Register</a></p>
+</div>
+{% endblock %}

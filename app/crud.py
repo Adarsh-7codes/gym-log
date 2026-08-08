@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import BodyPart, Difficulty, Exercise, Log, MemberRoutine, PlanDay, PlanItem, Role, User
+from app.models import BodyPart, Difficulty, Exercise, Log, MemberRoutine, PlanDay, PlanItem, Role, SplitDay, User
 
 
 class Forbidden(Exception):
@@ -359,3 +359,58 @@ def remove_from_routine(db: Session, user_id: int, exercise_id: int) -> None:
     if row:
         db.delete(row)
         db.commit()
+
+
+# --- Weekly split (which body parts on which weekday) ------------------
+
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_BODY_PART_ORDER = {bp: i for i, bp in enumerate(BODY_PARTS)}
+
+
+def _sorted_parts(parts) -> list:
+    return sorted(parts, key=lambda b: _BODY_PART_ORDER.get(b, 99))
+
+
+def get_split(db: Session, user_id: int) -> dict:
+    """weekday (0..6) -> [BodyPart] for the member's recurring weekly split."""
+    rows = db.scalars(select(SplitDay).where(SplitDay.user_id == user_id)).all()
+    out: dict = {}
+    for row in rows:
+        out.setdefault(row.weekday, []).append(row.body_part)
+    for wd in out:
+        out[wd] = _sorted_parts(out[wd])
+    return out
+
+
+def body_parts_for_day(db: Session, user_id: int, weekday: int) -> list:
+    """Body parts scheduled for one weekday (empty = rest day / not set)."""
+    rows = db.scalars(
+        select(SplitDay).where(SplitDay.user_id == user_id, SplitDay.weekday == weekday)
+    ).all()
+    return _sorted_parts(row.body_part for row in rows)
+
+
+def set_split_for_day(db: Session, user_id: int, weekday: int, body_parts) -> None:
+    """Make the member's split for one weekday exactly `body_parts`."""
+    want = set(body_parts)
+    current = db.scalars(
+        select(SplitDay).where(SplitDay.user_id == user_id, SplitDay.weekday == weekday)
+    ).all()
+    have = {row.body_part: row for row in current}
+    for bp, row in have.items():
+        if bp not in want:
+            db.delete(row)
+    for bp in want:
+        if bp not in have:
+            db.add(SplitDay(user_id=user_id, weekday=weekday, body_part=bp))
+    db.commit()
+
+
+def routine_for_parts(db: Session, user_id: int, parts) -> dict:
+    """Routine exercises limited to `parts`, kept in the split's body-part order."""
+    groups = routine_grouped(db, user_id)
+    ordered: dict = {}
+    for bp in parts:
+        if bp in groups:
+            ordered[bp] = groups[bp]
+    return ordered

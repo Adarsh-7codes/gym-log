@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Weekly Split · Gym Log{% endblock %}
+{% block nav_split %}active{% endblock %}
+{% block content %}
+<h1>Weekly split</h1>
+<p class="subtitle">Choose which body part(s) you train each day. Your log screen then shows only that day's exercises. You can pick more than one per day — e.g. Chest + Arms.</p>
+
+{% if saved %}<div class="ok-flash">✓ Split saved. Your log screen now follows this each week.</div>{% endif %}
+
+<form method="post" action="/split">
+  <div class="grid7">
+    {% for d in days %}
+    <div class="daycard">
+      <h3>{{ d.name }}</h3>
+      <div class="splitparts">
+        {% for bp in body_parts %}
+        <label class="chip">
+          <input type="checkbox" name="d{{ d.index }}" value="{{ bp }}" {% if bp in d.parts %}checked{% endif %}>
+          <span>{{ bp }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <button type="submit" class="bigsave" style="max-width:320px">Save weekly split</button>
+</form>
+
+<p class="muted" style="font-size:13px;margin-top:16px">
+  Rest day? Leave every box unchecked for that day. Pick the actual exercises for each body part in the
+  <a href="/library">Exercise Library</a> — this page only decides which body parts land on which day.
+</p>
+{% endblock %}

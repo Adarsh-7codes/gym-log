@@ -191,6 +191,23 @@
     .feelbtns input:checked + .feelbtn.tough { background: rgba(255,92,104,.16); color: var(--danger); border-color: #8a2f36; }
     .bigsave { width: 100%; margin-top: 20px; padding: 16px; font-size: 17px; border-radius: 12px; }
 
+    /* weekly split: day-picker on the log screen */
+    .daypick { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+    .daybtn { flex: 0 0 auto; min-width: 78px; text-align: center; padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 10px; background: var(--panel-2); color: var(--muted); text-decoration: none; }
+    .daybtn:hover { border-color: var(--accent); text-decoration: none; }
+    .daybtn.sel { border-color: var(--accent); background: rgba(79,140,255,.12); }
+    .daybtn .dshort { display: block; font-weight: 700; font-size: 14px; color: var(--text); }
+    .daybtn .dparts { display: block; font-size: 10px; margin-top: 2px; text-transform: capitalize; }
+    .daybtn .dtoday { display: block; font-size: 9px; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+    .dayhead { font-weight: 700; font-size: 15px; margin: 2px 0 12px; text-transform: capitalize; }
+    /* weekly split editor: body-part chips */
+    .splitparts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid var(--border);
+      border-radius: 999px; font-size: 13px; cursor: pointer; background: var(--panel-2); color: var(--muted); }
+    .chip input { accent-color: var(--accent); margin: 0; }
+    .chip:has(input:checked) { border-color: var(--accent); color: var(--text); background: rgba(79,140,255,.12); }
+
     /* exercise library */
     .tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 18px; -webkit-overflow-scrolling: touch; }
     .tab { flex: 0 0 auto; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--border);
@@ -251,8 +268,10 @@
       <details class="menu">
         <summary aria-label="Open menu" title="Menu">☰</summary>
         <div class="menu-panel">
+          {% if current_user.role.value == 'trainer' %}
           <a href="/planner" class="{% block nav_planner %}{% endblock %}">Planner</a>
-          {% if current_user.role.value != 'trainer' %}
+          {% else %}
+          <a href="/split" class="{% block nav_split %}{% endblock %}">Weekly Split</a>
           <a href="/library" class="{% block nav_library %}{% endblock %}">Exercise Library</a>
           {% endif %}
           <a href="/logs/new" class="{% block nav_newlog %}{% endblock %}">New Log</a>

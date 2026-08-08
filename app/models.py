@@ -74,6 +74,23 @@ class Exercise(Base):
     logs = relationship("Log", back_populates="exercise")
 
 
+class SplitDay(Base):
+    """One (weekday, body_part) pairing in a member's recurring weekly split.
+
+    A day can have several rows -- e.g. Monday -> chest AND arms -- so members
+    who train two body parts a day are supported. The log screen reads the
+    current weekday's body parts and shows only those exercises.
+    """
+
+    __tablename__ = "split_days"
+    __table_args__ = (UniqueConstraint("user_id", "weekday", "body_part", name="uq_split_user_day_part"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    weekday = Column(Integer, nullable=False)  # 0 = Monday ... 6 = Sunday
+    body_part = Column(SAEnum(BodyPart, native_enum=False, length=20), nullable=False)
+
+
 class MemberRoutine(Base):
     """A member's standing selection of exercises per body_part.
 

@@ -3,21 +3,36 @@
 {% block nav_newlog %}active{% endblock %}
 {% block content %}
 <h1>Log a set</h1>
-<p class="subtitle">Tap an exercise from your routine — your last weight is filled in, just adjust and save.</p>
+<p class="subtitle">Tap an exercise from your day — your last weight is filled in, just adjust and save.</p>
 
 {% if saved %}<div class="ok-flash">✓ Saved. Log your next set below.</div>{% endif %}
 {% if error %}<div class="alert">{{ error }}</div>{% endif %}
 
-{% if not routine %}
-<div class="panel">
-  <div class="empty">
-    Your routine is empty.<br>
-    <a href="/library">Add exercises from the Exercise Library →</a> and they'll appear here every time.
-  </div>
+{# ---- Day picker (option B): default today, switch to any day ---- #}
+{% if day_picker %}
+<div class="daypick">
+  {% for d in day_picker %}
+  <a href="/logs/new?weekday={{ d.index }}" class="daybtn {% if d.is_selected %}sel{% endif %}">
+    <span class="dshort">{{ d.short }}</span>
+    <span class="dparts">{% if d.parts %}{{ d.parts | join(' · ') }}{% else %}rest{% endif %}</span>
+    {% if d.is_today %}<span class="dtoday">TODAY</span>{% endif %}
+  </a>
+  {% endfor %}
 </div>
-{% else %}
+{% endif %}
+
+{% if no_split %}
+<div class="rolebanner" style="border-left-color:var(--accent)">
+  <span>No weekly split set yet — showing your whole routine. <a href="/split">Set up your split →</a> to see just today's exercises.</span>
+</div>
+{% endif %}
+
+{% if routine %}
+<div class="dayhead">{{ day_name }}{% if day_parts %} — {{ day_parts | join(', ') }}{% endif %}</div>
+
 <form method="post" action="/logs/new" id="qform" class="panel">
   <input type="hidden" name="log_date" value="{{ today }}">
+  <input type="hidden" name="weekday" value="{{ selected_weekday }}">
   <input type="hidden" name="exercise_id" id="exercise_id" value="">
 
   <div class="exlist" id="exlist">
@@ -119,5 +134,22 @@
   });
 })();
 </script>
+
+{% else %}
+{# No exercises to show for the chosen day #}
+<div class="panel">
+  <div class="empty">
+    {% if no_split %}
+      Your routine is empty.<br>
+      <a href="/library">Add exercises from the Exercise Library →</a> and set up your <a href="/split">weekly split</a>.
+    {% elif not day_parts %}
+      <strong>{{ day_name }} is a rest day.</strong><br>
+      Pick another day above, or <a href="/split">edit your weekly split</a> to train today.
+    {% else %}
+      No <strong>{{ day_parts | join(' / ') }}</strong> exercises in your routine yet.<br>
+      <a href="/library">Add them from the Exercise Library →</a>
+    {% endif %}
+  </div>
+</div>
 {% endif %}
 {% endblock %}

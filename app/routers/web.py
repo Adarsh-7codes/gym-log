@@ -230,25 +230,57 @@ def new_log_page(
     request: Request,
     error: Optional[str] = None,
     saved: Optional[str] = None,
+    weekday: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
     exercises = db.scalars(select(Exercise).order_by(Exercise.name)).all()
 
-    # Members get the fast, tap-first logging screen, driven by their routine.
+    # Members get the fast, tap-first logging screen, driven by their weekly split.
     if current_user.role != Role.trainer:
-        routine = crud.routine_grouped(db, current_user.id)
+        today_wd = date.today().weekday()  # 0 = Monday
+        selected_wd = weekday if (weekday is not None and 0 <= weekday <= 6) else today_wd
+        split = crud.get_split(db, current_user.id)
+
+        if not split:
+            # No split set up yet -> fall back to the whole routine (nothing breaks),
+            # with a nudge to build a split for day-focused logging.
+            routine = crud.routine_grouped(db, current_user.id)
+            day_parts = []
+            no_split = True
+        else:
+            day_parts = crud.body_parts_for_day(db, current_user.id, selected_wd)
+            routine = crud.routine_for_parts(db, current_user.id, day_parts)
+            no_split = False
+
+        # Day-picker options (option B): every weekday, with its scheduled parts.
+        day_picker = [
+            {
+                "index": i,
+                "name": crud.WEEKDAY_NAMES[i],
+                "short": crud.WEEKDAY_NAMES[i][:3],
+                "parts": [bp.value for bp in split.get(i, [])],
+                "is_today": i == today_wd,
+                "is_selected": i == selected_wd,
+            }
+            for i in range(7)
+        ]
         last = crud.last_sets_by_exercise(db, current_user.id)
         return templates.TemplateResponse(
             "quick_log.html",
             {
                 "request": request,
                 "current_user": current_user,
-                "routine": routine,          # {body_part: [Exercise]} from MemberRoutine
+                "routine": routine,          # {body_part: [Exercise]} for the selected day
                 "last": last,
                 "today": date.today().isoformat(),
                 "error": error,
                 "saved": saved,
+                "no_split": no_split,
+                "day_parts": [bp.value for bp in day_parts],
+                "day_name": crud.WEEKDAY_NAMES[selected_wd],
+                "selected_weekday": selected_wd,
+                "day_picker": day_picker,
             },
         )
 
@@ -289,6 +321,7 @@ def create_log_submit(
     notes: str = Form(""),
     feeling: str = Form(""),
     user_id: str = Form(""),
+    weekday: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
@@ -310,8 +343,11 @@ def create_log_submit(
         return RedirectResponse(
             url=f"/logs/new?error={str(exc).replace(' ', '+')}", status_code=status.HTTP_303_SEE_OTHER
         )
-    # Members stay on the fast screen to log the next set; trainers return to the roster.
-    dest = "/logs/new?saved=1" if current_user.role != Role.trainer else "/dashboard"
+    if current_user.role == Role.trainer:
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    # Members stay on the same day's fast screen to log the next set.
+    wd = _opt_int(weekday)
+    dest = f"/logs/new?saved=1&weekday={wd}" if wd is not None else "/logs/new?saved=1"
     return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -531,6 +567,52 @@ def library_remove(
     crud.remove_from_routine(db, current_user.id, exercise_id)  # routine only, keeps logs
     dest = f"/library?part={part}" if part else "/library"
     return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Weekly split (which body parts on which weekday) ------------------
+
+
+@router.get("/split", response_class=HTMLResponse)
+def split_page(
+    request: Request,
+    saved: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_web),
+):
+    split = crud.get_split(db, current_user.id)
+    days = [
+        {"index": i, "name": crud.WEEKDAY_NAMES[i], "parts": {bp.value for bp in split.get(i, [])}}
+        for i in range(7)
+    ]
+    return templates.TemplateResponse(
+        "split.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "days": days,
+            "body_parts": [bp.value for bp in BodyPart],
+            "saved": saved,
+        },
+    )
+
+
+@router.post("/split")
+def split_save(
+    d0: list[str] = Form(default=[]),
+    d1: list[str] = Form(default=[]),
+    d2: list[str] = Form(default=[]),
+    d3: list[str] = Form(default=[]),
+    d4: list[str] = Form(default=[]),
+    d5: list[str] = Form(default=[]),
+    d6: list[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_web),
+):
+    # Each weekday posts a multi-checkbox field d0..d6 (list of body_part values).
+    for weekday, values in enumerate([d0, d1, d2, d3, d4, d5, d6]):
+        parts = [b for b in BodyPart if b.value in set(values)]
+        crud.set_split_for_day(db, current_user.id, weekday, parts)
+    return RedirectResponse(url="/split?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Members (trainer only) ---------------------------------------------

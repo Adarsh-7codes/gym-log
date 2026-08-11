@@ -4,15 +4,16 @@ Auth flow: login/register set an httponly `access_token` cookie; protected
 pages depend on `get_current_user_web`, which raises WebAuthRequired when the
 cookie is missing/invalid -- main.py maps that to a redirect to /login.
 """
+import os
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from email_validator import EmailNotValidError, validate_email
-from fastapi import APIRouter, Depends, Form, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -613,6 +614,53 @@ def split_save(
         parts = [b for b in BodyPart if b.value in set(values)]
         crud.set_split_for_day(db, current_user.id, weekday, parts)
     return RedirectResponse(url="/split?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Danger zone: token-guarded demo reset -----------------------------
+# Disabled unless the RESET_TOKEN env var is set on the server. Wipes all
+# accounts/logs/routines/splits but keeps the exercise library. Remove the
+# RESET_TOKEN env var after the demo to turn this off permanently.
+
+_RESET_TABLES = ("plan_items", "plan_days", "split_days", "member_routines", "logs", "users")
+
+
+def _reset_token() -> str:
+    return os.environ.get("RESET_TOKEN", "").strip()
+
+
+@router.get("/danger/reset", response_class=HTMLResponse)
+def reset_page(request: Request, token: str = ""):
+    expected = _reset_token()
+    if not expected:
+        raise HTTPException(status_code=404)  # feature off unless RESET_TOKEN is set
+    if token != expected:
+        return HTMLResponse("<h3>Invalid or missing token.</h3>", status_code=403)
+    return templates.TemplateResponse("reset.html", {"request": request, "token": token})
+
+
+@router.post("/danger/reset", response_class=HTMLResponse)
+def reset_do(
+    token: str = Form(""),
+    confirm: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    expected = _reset_token()
+    if not expected or token != expected:
+        return HTMLResponse("<h3>Invalid or missing token.</h3>", status_code=403)
+    if confirm.strip().upper() != "RESET":
+        return RedirectResponse(url=f"/danger/reset?token={token}", status_code=status.HTTP_303_SEE_OTHER)
+    # Delete children-first so it works on both Postgres and SQLite. Exercises
+    # (the library) are intentionally left intact.
+    for table in _RESET_TABLES:
+        db.execute(text(f"DELETE FROM {table}"))
+    db.commit()
+    return HTMLResponse(
+        "<div style='font-family:sans-serif;max-width:520px;margin:60px auto;text-align:center'>"
+        "<h2>✅ Database reset</h2>"
+        "<p>All accounts, logs, routines and splits were cleared. The exercise library is kept.</p>"
+        "<p><a href='/register'>Register now →</a> The first account becomes the trainer.</p>"
+        "</div>"
+    )
 
 
 # --- Members (trainer only) ---------------------------------------------

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reset demo data</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1115; color: #e7e9ee; display: flex; min-height: 100vh; margin: 0; align-items: center; justify-content: center; }
+    .card { background: #171a21; border: 1px solid #2a2f3a; border-radius: 12px; padding: 28px; max-width: 460px; width: 90%; }
+    h1 { margin: 0 0 8px; font-size: 20px; }
+    p { color: #99a0ad; font-size: 14px; line-height: 1.5; }
+    .warn { background: rgba(255,92,104,.12); border: 1px solid #ff5c68; color: #ffb3b8; padding: 12px 14px; border-radius: 8px; font-size: 13px; }
+    input[type=text] { width: 100%; box-sizing: border-box; padding: 11px 12px; margin: 12px 0; background: #1e222b;
+      border: 1px solid #2a2f3a; border-radius: 8px; color: #e7e9ee; font-size: 16px; }
+    button { width: 100%; padding: 14px; border: none; border-radius: 10px; background: #ff5c68; color: #fff;
+      font-size: 15px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #e04b56; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>⚠️ Reset demo data</h1>
+    <div class="warn">This permanently deletes <strong>all accounts, workout logs, routines, and weekly splits</strong>. The exercise library is kept. This cannot be undone.</div>
+    <p>Type <strong>RESET</strong> below to confirm. After it runs, register again — the first account becomes the trainer.</p>
+    <form method="post" action="/danger/reset">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="text" name="confirm" placeholder="Type RESET" autocomplete="off" autofocus>
+      <button type="submit">Wipe everything</button>
+    </form>
+  </div>
+</body>
+</html>

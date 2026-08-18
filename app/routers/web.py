@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.config import settings
 from app.database import get_db
-from app.deps import get_current_user_web, get_current_user_web_optional
+from app.deps import get_current_user_web, get_current_user_web_optional, require_trainer_web
 from app.models import BodyPart, Difficulty, Exercise, Log, Role, User
 from app.security import create_access_token, hash_password, verify_password
 
@@ -107,8 +107,24 @@ def login_submit(
     return response
 
 
+def _registration_open(db: Session) -> bool:
+    """Self-registration is closed on a trainer-first product.
+
+    The one exception is bootstrapping: an empty database must let the very
+    first account (the trainer) be created. After that, only the trainer adds
+    members -- unless ALLOW_OPEN_REGISTRATION is explicitly turned on.
+    """
+    if settings.allow_open_registration:
+        return True
+    return db.scalar(select(func.count()).select_from(User)) == 0
+
+
 @router.get("/register", response_class=HTMLResponse)
 def register_page(request: Request, error: Optional[str] = None, db: Session = Depends(get_db)):
+    if not _registration_open(db):
+        return templates.TemplateResponse(
+            "registration_closed.html", {"request": request}, status_code=status.HTTP_403_FORBIDDEN
+        )
     is_first_user = db.scalar(select(func.count()).select_from(User)) == 0
     return templates.TemplateResponse(
         "register.html", {"request": request, "error": error, "is_first_user": is_first_user}
@@ -122,6 +138,9 @@ def register_submit(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    if not _registration_open(db):
+        # Enforced server-side: hiding the form is not enough.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Registration is closed")
     email = _normalize_email(email)
     if not email:
         return RedirectResponse(
@@ -441,10 +460,8 @@ def exercises_page(
     request: Request,
     error: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_web),
+    current_user: User = Depends(require_trainer_web),
 ):
-    if current_user.role != Role.trainer:
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     exercises = db.scalars(
         select(Exercise).order_by(Exercise.body_part, Exercise.name)
     ).all()
@@ -469,10 +486,8 @@ def create_exercise_submit(
     equipment: str = Form(""),
     instructions: str = Form(""),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_web),
+    current_user: User = Depends(require_trainer_web),
 ):
-    if current_user.role != Role.trainer:
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     name = name.strip()
     if not name:
         return RedirectResponse(url="/exercises?error=Name+required", status_code=status.HTTP_303_SEE_OTHER)
@@ -499,10 +514,8 @@ def create_exercise_submit(
 def delete_exercise_submit(
     exercise_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_web),
+    current_user: User = Depends(require_trainer_web),
 ):
-    if current_user.role != Role.trainer:
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     exercise = db.get(Exercise, exercise_id)
     if exercise:
         db.delete(exercise)
@@ -616,12 +629,19 @@ def split_save(
     return RedirectResponse(url="/split?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
-# --- Danger zone: token-guarded demo reset -----------------------------
-# Disabled unless the RESET_TOKEN env var is set on the server. Wipes all
-# accounts/logs/routines/splits but keeps the exercise library. Remove the
-# RESET_TOKEN env var after the demo to turn this off permanently.
+# --- Danger zone: LOCAL-ONLY demo reset --------------------------------
+# Two independent guards, both required:
+#   1. Local only -- refuses to run unless the DB is the local SQLite file, so
+#      it is permanently dead on Render/Postgres no matter what env vars say.
+#   2. Token -- RESET_TOKEN must be set and match.
+# Wipes accounts/logs/routines/splits but keeps the exercise library.
 
 _RESET_TABLES = ("plan_items", "plan_days", "split_days", "member_routines", "logs", "users")
+
+
+def _reset_enabled() -> bool:
+    """Never enabled against a non-SQLite (i.e. deployed) database."""
+    return settings.is_sqlite and bool(os.environ.get("RESET_TOKEN", "").strip())
 
 
 def _reset_token() -> str:
@@ -630,9 +650,9 @@ def _reset_token() -> str:
 
 @router.get("/danger/reset", response_class=HTMLResponse)
 def reset_page(request: Request, token: str = ""):
+    if not _reset_enabled():
+        raise HTTPException(status_code=404)  # off on deployed/Postgres, or no token set
     expected = _reset_token()
-    if not expected:
-        raise HTTPException(status_code=404)  # feature off unless RESET_TOKEN is set
     if token != expected:
         return HTMLResponse("<h3>Invalid or missing token.</h3>", status_code=403)
     return templates.TemplateResponse("reset.html", {"request": request, "token": token})
@@ -644,8 +664,9 @@ def reset_do(
     confirm: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    expected = _reset_token()
-    if not expected or token != expected:
+    if not _reset_enabled():
+        raise HTTPException(status_code=404)
+    if token != _reset_token():
         return HTMLResponse("<h3>Invalid or missing token.</h3>", status_code=403)
     if confirm.strip().upper() != "RESET":
         return RedirectResponse(url=f"/danger/reset?token={token}", status_code=status.HTTP_303_SEE_OTHER)
@@ -671,10 +692,8 @@ def members_page(
     request: Request,
     error: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_web),
+    current_user: User = Depends(require_trainer_web),
 ):
-    if current_user.role != Role.trainer:
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     # log count + most recent log date per user, in one grouped query
     counts = dict(
         db.execute(select(Log.user_id, func.count(Log.id)).group_by(Log.user_id)).all()
@@ -703,10 +722,8 @@ def create_member_submit(
     email: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_web),
+    current_user: User = Depends(require_trainer_web),
 ):
-    if current_user.role != Role.trainer:
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     email = _normalize_email(email)
     if not email:
         return RedirectResponse(

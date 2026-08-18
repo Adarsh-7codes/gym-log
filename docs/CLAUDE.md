@@ -33,7 +33,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `DATABASE_URL` — Postgres connection (auto-wired from `gymlog-db`).
 - `JWT_SECRET` — token signing key (Render-generated).
 - `COOKIE_SECURE=true`, `JWT_ALGORITHM=HS256`, `ACCESS_TOKEN_EXPIRE_MINUTES=10080`.
-- `RESET_TOKEN` — **optional, demo only.** When set, unlocks the reset page (see §10). Currently set to `reset123`. **Delete it after demos** to disable the reset.
+- `RESET_TOKEN` — **local dev only.** Has no effect on Render (see §10). Safe to delete from the Render dashboard.
+- `ALLOW_OPEN_REGISTRATION` — default **false**. Members are created by the trainer; self-registration only bootstraps the first account.
 - No secrets are committed. `.env` and `*.db` are gitignored; passwords are stored only as bcrypt hashes.
 
 ## 6. Roles (important rule)
@@ -65,11 +66,19 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/library`, `/split`, `/logs/new`, `/logs/{id}/edit|delete`, `/progress`.
 - `/members` (trainer): list + create member accounts.
 - `/exercises` (trainer): manage the raw exercise list.
-- `/danger/reset` — demo reset (see §10).
+- `/danger/reset` — demo reset, **local only** (see §10).
+- `/register` — 403 once a trainer exists (renders `registration_closed.html`).
 
-## 10. Demo reset (token-guarded)
-- `GET/POST /danger/reset` — **disabled unless `RESET_TOKEN` env var is set.** Open `…/danger/reset?token=<RESET_TOKEN>`, type `RESET`, confirm → wipes accounts/logs/routines/splits, **keeps the exercise library**. Then first registration = trainer again.
-- Turn it off after demos by deleting the `RESET_TOKEN` env var in Render.
+## 10. Demo reset (LOCAL ONLY)
+- `GET/POST /danger/reset` requires **both** guards: the DB must be **SQLite** (local) **and** `RESET_TOKEN` must be set and match. On Render/Postgres it is permanently **404** regardless of env vars.
+- Local use: `RESET_TOKEN=x uvicorn app.main:app --reload`, open `http://localhost:8000/danger/reset?token=x`, type `RESET`. Wipes accounts/logs/routines/splits, keeps the exercise library.
+
+## 10b. Authorization model (Phase 0)
+- Trainer-only web routes use the shared **`require_trainer_web`** dependency (403 for members) — no inline copy-paste checks.
+- Trainer-only API routes use **`require_trainer`** (403).
+- Member data scoping is enforced in **`crud.py`**, not templates: forged `?user_id=` is ignored; another member's log returns **404**.
+- **Self-registration is closed** once a trainer exists (403 on GET and POST); the trainer creates members at `/members`. Bootstrap exception: an empty DB allows the first account (becomes trainer). Override locally with `ALLOW_OPEN_REGISTRATION=true`.
+- Re-runnable proof: **`docs/authz-check.md`**.
 
 ## 11. Conventions / gotchas
 - **Schema changes are extend-only:** new columns added idempotently in `app/database.py::ensure_schema()` (runs on startup). New tables handled by `create_all`. Exercise library re-seeded on every startup (idempotent by name).
@@ -81,7 +90,12 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 ## 12. Git history (main)
 - `dfc7cc6` initial app + Render deploy config
 - `e2cdb54` weekly split: day-based exercise filtering
-- `1b0ee77` token-guarded demo reset endpoint (currently deployed)
+- `1b0ee77` token-guarded demo reset endpoint
+- `d4f3aaa` add this project-memory doc
+- _(Phase 0)_ security hardening: local-only reset, shared `require_trainer_web`, closed self-registration, `docs/authz-check.md`
+
+## 12b. Positioning (trainer-first)
+The app is sold to the **trainer/gym owner**, not to members. The trainer is the only guaranteed daily user; members attend ~1.5–2×/week and few will type into an app. Features are judged on: *does it make the trainer's day easier, or help him sell/retain memberships?* Member screens are kept only where they need **near-zero data entry** — all existing member features (Library, Weekly Split, fast day-based logging, progress) are retained. Roadmap: `docs/gymlog-trainer-first-prompt.md` (Phases 1–6: memberships & dues, trainer-edits-routines, attendance, talking points, overload targets, body weight).
 
 ## 13. Open ideas / possible next steps
 - Optionally give the **trainer** the member-style day-filtered log screen too (currently trainer sees the full form).

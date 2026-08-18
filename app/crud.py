@@ -20,6 +20,7 @@ from app.models import (
     PlanItem,
     Role,
     SplitDay,
+    Target,
     User,
 )
 
@@ -387,6 +388,107 @@ def last_attendance(db: Session, user_id: int) -> Optional[date]:
     return db.scalar(
         select(func.max(Attendance.date)).where(Attendance.user_id == user_id)
     )
+
+
+# --- Progressive-overload targets ---------------------------------------
+
+
+def exercise_best(db: Session, user_id: int, exercise_id: int) -> Optional[dict]:
+    """Heaviest logged set for one exercise, and how long it has stood.
+
+    `since` is when that best was FIRST reached, so "unchanged for N weeks"
+    measures the plateau rather than the time since the last session.
+    """
+    logs = db.scalars(
+        select(Log)
+        .where(Log.user_id == user_id, Log.exercise_id == exercise_id, Log.weight.is_not(None))
+        .order_by(Log.date)
+    ).all()
+    if not logs:
+        return None
+    best_weight = max(log.weight for log in logs)
+    at_best = [log for log in logs if log.weight == best_weight]
+    return {
+        "weight": best_weight,
+        "reps": max((log.reps or 0) for log in at_best),
+        "since": at_best[0].date,
+        "days_at_best": (date.today() - at_best[0].date).days,
+        "sessions": len(logs),
+    }
+
+
+def create_target(
+    db: Session,
+    user_id: int,
+    *,
+    exercise_id: int,
+    target_weight: float,
+    target_reps: Optional[int],
+    target_date: date,
+) -> Target:
+    if not db.get(User, user_id):
+        raise NotFound("Member not found")
+    if not db.get(Exercise, exercise_id):
+        raise NotFound("Exercise not found")
+    if target_weight <= 0:
+        raise ValueError("Target weight must be greater than zero")
+    target = Target(
+        user_id=user_id,
+        exercise_id=exercise_id,
+        target_weight=target_weight,
+        target_reps=target_reps,
+        target_date=target_date,
+    )
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+def delete_target(db: Session, target_id: int) -> Optional[int]:
+    target = db.get(Target, target_id)
+    if target is None:
+        return None
+    user_id = target.user_id
+    db.delete(target)
+    db.commit()
+    return user_id
+
+
+def target_progress(db: Session, target: Target, today: Optional[date] = None) -> dict:
+    """Where a member stands against one target -- all of it checkable from logs."""
+    today = today or date.today()
+    best = exercise_best(db, target.user_id, target.exercise_id)
+    days_left = (target.target_date - today).days
+
+    reached = False
+    gap = None
+    if best is not None:
+        meets_weight = best["weight"] >= target.target_weight
+        meets_reps = target.target_reps is None or best["reps"] >= target.target_reps
+        reached = meets_weight and meets_reps
+        gap = round(target.target_weight - best["weight"], 2)
+
+    return {
+        "target": target,
+        "best": best,
+        "reached": reached,
+        "gap": gap,
+        "days_left": days_left,
+        "overdue": (not reached) and days_left < 0,
+        # Only call it a plateau once the best has stood a while.
+        "weeks_at_best": (best["days_at_best"] // 7) if best else None,
+    }
+
+
+def targets_for(db: Session, user_id: int, today: Optional[date] = None) -> list:
+    """All of a member's targets with progress, unmet and soonest-due first."""
+    targets = db.scalars(
+        select(Target).where(Target.user_id == user_id).order_by(Target.target_date)
+    ).all()
+    rows = [target_progress(db, t, today) for t in targets]
+    rows.sort(key=lambda r: (r["reached"], r["target"].target_date))
+    return rows
 
 
 # --- New-member cohort (first 90 days) ----------------------------------

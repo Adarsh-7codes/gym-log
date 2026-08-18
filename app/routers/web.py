@@ -270,6 +270,8 @@ def dashboard(
             # rendered to the member as a verdict on themselves.
             "talking_points": crud.talking_points(db, viewed_user_id) if viewed_member else [],
             "cohort": crud.cohort_stats(db, viewed_member) if viewed_member else None,
+            # Overload targets: trainer sets them, member sees their own.
+            "targets": crud.targets_for(db, viewed_user_id),
         },
     )
 
@@ -743,6 +745,46 @@ def reset_do(
         "<p><a href='/register'>Register now →</a> The first account becomes the trainer.</p>"
         "</div>"
     )
+
+
+# --- Progressive-overload targets (trainer sets; members read only) -----
+
+
+@router.post("/members/{user_id}/targets")
+def target_add(
+    user_id: int,
+    exercise_id: int = Form(...),
+    target_weight: str = Form(...),
+    target_reps: str = Form(""),
+    target_date: str = Form(...),
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    dest = f"/dashboard?user_id={user_id}"
+    try:
+        crud.create_target(
+            db,
+            user_id,
+            exercise_id=exercise_id,
+            target_weight=float(target_weight),
+            target_reps=_opt_int(target_reps),
+            target_date=date.fromisoformat(target_date),
+        )
+    except (crud.NotFound, ValueError) as exc:
+        msg = str(exc).replace(" ", "+") or "Invalid+values"
+        return RedirectResponse(url=f"{dest}&error={msg}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/targets/{target_id}/delete")
+def target_delete(
+    target_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    user_id = crud.delete_target(db, target_id)
+    dest = f"/dashboard?user_id={user_id}" if user_id else "/dashboard"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Attendance (trainer marks; members read only) ----------------------

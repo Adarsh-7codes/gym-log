@@ -102,6 +102,26 @@ class Membership(Base):
     user = relationship("User", back_populates="memberships")
 
 
+class Target(Base):
+    """A progressive-overload goal the trainer sets for one member's lift.
+
+    Deliberately objective: every part of it is checkable against Log rows,
+    which is what makes it worth showing to the member.
+    """
+
+    __tablename__ = "targets"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_weight = Column(Float, nullable=False)
+    target_reps = Column(Integer, nullable=True)
+    target_date = Column(Date, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    exercise = relationship("Exercise")
+
+
 class Attendance(Base):
     """One member showing up on one day.
 

@@ -201,6 +201,17 @@
     .editbanner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px;
       background: rgba(232,181,61,.12); border: 1px solid var(--trainer); border-radius: 8px;
       padding: 10px 14px; margin-bottom: 18px; color: var(--text); }
+    /* overload targets */
+    .targetlist { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .targetrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+      border-radius: 8px; }
+    .targetrow.done { border-left-color: var(--ok); }
+    .targetrow.late { border-left-color: var(--danger); }
+    .targetmain { flex: 1; min-width: 0; }
+    .targethead { font-size: 14px; font-weight: 600; }
+    .targetmeta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
     /* talking points + new-member cohort */
     .talkpanel { border-left: 3px solid var(--trainer); }
     .talklist { margin: 10px 0 0; padding-left: 20px; }

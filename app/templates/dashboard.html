@@ -191,7 +191,83 @@
   </p>
   {% endif %}
 </div>
+{% endif %}
 
+{# ---- Overload targets: trainer sets them; the member sees their own ---- #}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">{% if viewed_member %}Targets{% else %}Your targets{% endif %}</strong>
+  {% if targets %}
+  <div class="targetlist">
+    {% for t in targets %}
+    <div class="targetrow {% if t.reached %}done{% elif t.overdue %}late{% endif %}">
+      <div class="targetmain">
+        <div class="targethead">
+          {{ t.target.exercise.name }} — {{ '%g'|format(t.target.target_weight) }} kg{% if t.target.target_reps %} × {{ t.target.target_reps }}{% endif %}
+          <span class="muted">by {{ t.target.target_date.strftime('%d %b %Y') }}</span>
+        </div>
+        <div class="targetmeta">
+          {% if t.reached %}
+            <span class="flag flag-ok">reached</span>
+            Current best {{ '%g'|format(t.best.weight) }} kg{% if t.best.reps %} × {{ t.best.reps }}{% endif %}.
+          {% elif not t.best %}
+            No logged sessions for this exercise yet.
+          {% else %}
+            Current best {{ '%g'|format(t.best.weight) }} kg{% if t.best.reps %} × {{ t.best.reps }}{% endif %}.
+            {{ '%g'|format(t.gap) }} kg to go.
+            {% if t.weeks_at_best >= 1 %}Unchanged for {{ t.weeks_at_best }} week{{ '' if t.weeks_at_best == 1 else 's' }}.{% endif %}
+          {% endif %}
+          {% if not t.reached %}
+            {% if t.overdue %}<span class="flag flag-red">{{ -t.days_left }}d overdue</span>
+            {% else %}<span class="muted">{{ t.days_left }}d left</span>{% endif %}
+          {% endif %}
+        </div>
+      </div>
+      {% if viewed_member %}
+      <form method="post" action="/targets/{{ t.target.id }}/delete" style="margin:0"
+            onsubmit="return confirm('Remove this target?')">
+        <button type="submit" class="btn danger" style="padding:5px 10px;font-size:12px">✕</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">
+    {% if viewed_member %}No targets set for {{ viewed_member.name }} yet.{% else %}No targets set for you yet.{% endif %}
+  </p>
+  {% endif %}
+
+  {% if viewed_member %}
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--accent)">+ Set a target</summary>
+    <form method="post" action="/members/{{ viewed_member.id }}/targets" style="margin-top:12px">
+      <div class="row">
+        <div class="field inline" style="min-width:180px">
+          <label for="t_exercise">Exercise</label>
+          <select id="t_exercise" name="exercise_id" required>
+            {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field inline" style="max-width:150px">
+          <label for="t_weight">Target kg</label>
+          <input id="t_weight" type="number" name="target_weight" step="0.5" min="0" required>
+        </div>
+        <div class="field inline" style="max-width:130px">
+          <label for="t_reps">Reps <span class="muted">(opt)</span></label>
+          <input id="t_reps" type="number" name="target_reps" min="1">
+        </div>
+        <div class="field inline" style="max-width:170px">
+          <label for="t_date">By date</label>
+          <input id="t_date" type="date" name="target_date" required>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:12px">Save target</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+
+{% if viewed_member %}
 {# ---- Trainer: membership, dues and renewal history for this member ---- #}
 {% set days_left = (membership.expires_on - today).days if membership else None %}
 <div class="panel" style="margin-bottom:20px">

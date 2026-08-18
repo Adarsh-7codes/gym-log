@@ -28,9 +28,21 @@
 </div>
 
 <div class="sortbar">
+  <span class="muted" style="font-size:12px">Show:</span>
+  <a href="/dashboard?sort={{ sort }}" class="sortopt {% if view != 'new' %}sel{% endif %}">Everyone</a>
+  <a href="/dashboard?sort={{ sort }}&view=new" class="sortopt {% if view == 'new' %}sel{% endif %}">
+    First {{ new_member_days }} days ({{ new_count }}){% if new_attention %} · <strong style="color:var(--danger)">{{ new_attention }} ⚑</strong>{% endif %}
+  </a>
+</div>
+
+{% if view == 'new' %}
+<p class="subtitle" style="margin:-4px 0 14px">Members who joined in the last {{ new_member_days }} days — where most people drop off, and where stall detection can't help yet.</p>
+{% endif %}
+
+<div class="sortbar">
   <span class="muted" style="font-size:12px">Sort:</span>
   {% for key, label in [('default','Needs attention'),('expiry','Expiry'),('dues','Dues'),('activity','Last session'),('name','Name')] %}
-  <a href="/dashboard?sort={{ key }}" class="sortopt {% if sort == key %}sel{% endif %}">{{ label }}</a>
+  <a href="/dashboard?sort={{ key }}{% if view == 'new' %}&view=new{% endif %}" class="sortopt {% if sort == key %}sel{% endif %}">{{ label }}</a>
   {% endfor %}
 </div>
 
@@ -38,12 +50,25 @@
   {% if roster %}
   <table>
     <thead>
+      {% if view == 'new' %}
+      <tr><th>Member</th><th>Joined</th><th>First 14 days</th><th>Last 7 days</th><th>Status</th><th></th></tr>
+      {% else %}
       <tr><th>Member</th><th>Expires</th><th>Dues</th><th>This month</th><th>Last session</th><th>Status</th><th></th></tr>
+      {% endif %}
     </thead>
     <tbody>
       {% for s in roster %}
       <tr class="clickrow" onclick="location.href='/dashboard?user_id={{ s.user.id }}'">
-        <td data-label="Member"><strong>{{ s.user.name }}</strong></td>
+        <td data-label="Member"><strong>{{ s.user.name }}</strong>{% if view != 'new' and s.is_new %}<span class="newbadge">new</span>{% endif %}</td>
+        {% if view == 'new' %}
+        <td data-label="Joined">{{ s.cohort.days_since_joining }}d ago
+          <span class="muted">({{ s.cohort.joined_on.strftime('%d %b') }})</span></td>
+        <td data-label="First 14 days">{{ s.cohort.sessions_first_14 }}</td>
+        <td data-label="Last 7 days">
+          {% if s.cohort.needs_attention %}<span class="flag flag-red">{{ s.cohort.sessions_last_7 }}</span>
+          {% else %}{{ s.cohort.sessions_last_7 }}{% endif %}
+        </td>
+        {% else %}
         <td data-label="Expires">
           {% if not s.membership %}<span class="muted">no plan</span>
           {% elif s.expired %}<span class="flag flag-red">expired {{ -s.days_to_expiry }}d ago</span>
@@ -62,6 +87,7 @@
           {% if s.last_date %}{{ s.last_date.strftime('%d %b') }} <span class="muted">({{ s.days_since }}d)</span>
           {% else %}<span class="muted">never</span>{% endif %}
         </td>
+        {% endif %}
         <td data-label="Status">
           {% if s.flagged %}
             <span class="flag flag-red">⚑ Flagged</span>
@@ -143,6 +169,29 @@
 </div>
 
 {% if viewed_member %}
+{# ---- Trainer's talking points: facts to speak from, not a verdict ---- #}
+<div class="panel talkpanel" style="margin-bottom:20px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+    <strong style="font-size:14px">Talking points</strong>
+    {% if cohort and cohort.is_new %}
+    <span class="newbadge">first {{ cohort.days_since_joining }} days · joined {{ cohort.joined_on.strftime('%d %b') }}</span>
+    {% endif %}
+  </div>
+  {% if talking_points %}
+  <ul class="talklist">
+    {% for point in talking_points %}<li>{{ point }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">Not enough data yet for anything true to say.</p>
+  {% endif %}
+  {% if cohort and cohort.is_new %}
+  <p class="muted" style="margin:10px 0 0;font-size:12px">
+    {{ cohort.sessions_first_14 }} session{{ '' if cohort.sessions_first_14 == 1 else 's' }} in their first 14 days ·
+    {{ cohort.sessions_last_7 }} in the last 7
+  </p>
+  {% endif %}
+</div>
+
 {# ---- Trainer: membership, dues and renewal history for this member ---- #}
 {% set days_left = (membership.expires_on - today).days if membership else None %}
 <div class="panel" style="margin-bottom:20px">

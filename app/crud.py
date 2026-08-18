@@ -389,6 +389,185 @@ def last_attendance(db: Session, user_id: int) -> Optional[date]:
     )
 
 
+# --- New-member cohort (first 90 days) ----------------------------------
+
+NEW_MEMBER_DAYS = 90        # churn window: treat as "new" for this long
+FIRST_WINDOW_DAYS = 14      # onboarding window we report sessions for
+RECENT_WINDOW_DAYS = 7      # "last 7 days" attention window
+MIN_SESSIONS_RECENT = 2     # fewer than this in the recent window -> attention
+
+
+def joined_on(db: Session, user: User) -> Optional[date]:
+    """Best available join date.
+
+    Prefers the earliest membership plan_start -- that is how a gym actually
+    thinks about when someone joined -- and falls back to the account's
+    created_at. Self-corrects as real memberships are recorded.
+    """
+    first_plan = db.scalar(
+        select(func.min(Membership.plan_start)).where(Membership.user_id == user.id)
+    )
+    if first_plan:
+        return first_plan
+    if user.created_at:
+        return user.created_at.date()
+    return None
+
+
+def _sessions_between(db: Session, user_id: int, start: date, end: date) -> int:
+    """Attendance rows in [start, end]."""
+    return db.scalar(
+        select(func.count(Attendance.id)).where(
+            Attendance.user_id == user_id, Attendance.date >= start, Attendance.date <= end
+        )
+    ) or 0
+
+
+def cohort_stats(db: Session, user: User, today: Optional[date] = None) -> dict:
+    """First-90-days view for one member. Empty-ish dict when not applicable."""
+    today = today or date.today()
+    joined = joined_on(db, user)
+    if joined is None:
+        return {"is_new": False, "joined_on": None, "days_since_joining": None}
+
+    days_since = (today - joined).days
+    is_new = 0 <= days_since <= NEW_MEMBER_DAYS
+    first_14 = _sessions_between(db, user.id, joined, joined + timedelta(days=FIRST_WINDOW_DAYS))
+    last_7 = _sessions_between(db, user.id, today - timedelta(days=RECENT_WINDOW_DAYS), today)
+
+    # Only judge attendance once there is at least one recorded session --
+    # otherwise every new member flags before the trainer has started marking.
+    has_any = (
+        db.scalar(select(func.count(Attendance.id)).where(Attendance.user_id == user.id)) or 0
+    ) > 0
+    needs_attention = is_new and has_any and last_7 < MIN_SESSIONS_RECENT
+
+    return {
+        "is_new": is_new,
+        "joined_on": joined,
+        "days_since_joining": days_since,
+        "sessions_first_14": first_14,
+        "sessions_last_7": last_7,
+        "needs_attention": needs_attention,
+    }
+
+
+# --- Talking points -----------------------------------------------------
+#
+# Strict rules, enforced here rather than left to the template:
+#   * Facts only, derived from logged or attendance data.
+#   * Never infer WHY something happened (diet, effort, motivation, lifestyle).
+#   * Never accusatory or shaming phrasing -- these are notes for the trainer
+#     to speak from, not a verdict handed to the member.
+#   * If there is not enough data for a true statement, produce nothing.
+
+TALKING_POINT_LIMIT = 3
+_IMPROVEMENT_MIN_SESSIONS = 3   # need a real trend, not two data points
+
+
+def _fmt_weight(value: float) -> str:
+    """60.0 -> '60', 47.5 -> '47.5'."""
+    return f"{value:g}"
+
+
+def _improvement_point(db: Session, user_id: int) -> Optional[str]:
+    """Biggest verified weight gain on one exercise, e.g. 'Bench 40 -> 47.5 kg over 6 weeks'."""
+    logs = db.scalars(
+        select(Log)
+        .where(Log.user_id == user_id, Log.weight.is_not(None))
+        .order_by(Log.date)
+    ).all()
+    by_exercise: dict = {}
+    for log in logs:
+        by_exercise.setdefault(log.exercise_id, []).append(log)
+
+    best = None
+    for ex_logs in by_exercise.values():
+        if len(ex_logs) < _IMPROVEMENT_MIN_SESSIONS:
+            continue
+        first, last = ex_logs[0], ex_logs[-1]
+        gain = (last.weight or 0) - (first.weight or 0)
+        if gain <= 0:
+            continue
+        weeks = max(1, round((last.date - first.date).days / 7))
+        candidate = (
+            gain,
+            f"{first.exercise.name} {_fmt_weight(first.weight)} → {_fmt_weight(last.weight)} kg "
+            f"over {weeks} week{'' if weeks == 1 else 's'}",
+        )
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best[1] if best else None
+
+
+def _attendance_point(db: Session, user_id: int, today: Optional[date] = None) -> Optional[str]:
+    """This month's sessions vs last month's -- only when both are known."""
+    today = today or date.today()
+    this_first = today.replace(day=1)
+    last_last = this_first - timedelta(days=1)
+    last_first = last_last.replace(day=1)
+
+    this_month = _sessions_between(db, user_id, this_first, today)
+    last_month = _sessions_between(db, user_id, last_first, last_last)
+    if this_month == 0 and last_month == 0:
+        return None
+    if last_month == 0:
+        return f"{this_month} session{'' if this_month == 1 else 's'} this month"
+    if this_month > last_month:
+        return f"{this_month} sessions this month, up from {last_month}"
+    if this_month < last_month:
+        return f"{this_month} this month vs {last_month} last month"
+    return f"{this_month} sessions this month, same as last month"
+
+
+def _neglected_body_part_point(db: Session, user_id: int, today: Optional[date] = None) -> Optional[str]:
+    """A body part in their split they used to train but haven't lately."""
+    today = today or date.today()
+    planned = {bp for parts in get_split(db, user_id).values() for bp in parts}
+    if not planned:
+        return None
+    worst = None
+    for bp in planned:
+        last = db.scalar(
+            select(func.max(Log.date))
+            .join(Exercise, Log.exercise_id == Exercise.id)
+            .where(Log.user_id == user_id, Exercise.body_part == bp)
+        )
+        if last is None:
+            continue  # never trained it -> no factual "hasn't since" claim
+        days = (today - last).days
+        if days >= INACTIVE_DAYS and (worst is None or days > worst[0]):
+            worst = (days, f"Hasn't trained {bp.value} in {days} days")
+    return worst[1] if worst else None
+
+
+def _stall_point(db: Session, user_id: int) -> Optional[str]:
+    """An exercise sitting at the same top weight, stated neutrally."""
+    logs = db.scalars(
+        select(Log).where(Log.user_id == user_id).order_by(Log.date.desc(), Log.id.desc())
+    ).all()
+    stalled = _stalled_exercises_from_logs(logs)
+    if not stalled:
+        return None
+    ex = stalled[0]
+    ex_logs = [x for x in logs if x.exercise_id == ex.id][:SESSIONS_TO_COMPARE]
+    weight = ex_logs[0].weight if ex_logs else None
+    if weight is None:
+        return f"{ex.name} unchanged for {len(ex_logs)} sessions"
+    return f"{ex.name} unchanged at {_fmt_weight(weight)} kg for {len(ex_logs)} sessions"
+
+
+def talking_points(db: Session, user_id: int, today: Optional[date] = None) -> list:
+    """Up to TALKING_POINT_LIMIT true, non-judgemental lines. May be empty."""
+    candidates = [
+        _improvement_point(db, user_id),
+        _attendance_point(db, user_id, today),
+        _neglected_body_part_point(db, user_id, today),
+        _stall_point(db, user_id),
+    ]
+    return [c for c in candidates if c][:TALKING_POINT_LIMIT]
+
+
 # --- Progress / stall detection ----------------------------------------
 
 SESSIONS_TO_COMPARE = 3   # look at the last N logged sessions per exercise
@@ -446,11 +625,18 @@ def member_status(db: Session, user: User) -> dict:
     stalled = _stalled_exercises_from_logs(logs)
     sessions_this_month = attendance_this_month(db, user.id)
 
+    cohort = cohort_stats(db, user)
+
     reasons = []
     if last_date is None:
         reasons.append("No sessions yet")
     elif inactive:
         reasons.append(f"No session in {days_since} days")
+    if cohort.get("needs_attention"):
+        reasons.append(
+            f"New member, {cohort['sessions_last_7']} session"
+            f"{'' if cohort['sessions_last_7'] == 1 else 's'} in last 7 days"
+        )
     if stalled:
         reasons.append("Stalled: " + ", ".join(e.name for e in stalled))
 
@@ -465,6 +651,8 @@ def member_status(db: Session, user: User) -> dict:
         "last_logged": last_logged,
         "last_attended": attended,
         "sessions_this_month": sessions_this_month,
+        "cohort": cohort,
+        "is_new": cohort.get("is_new", False),
         "days_since": days_since,
         "inactive": inactive,
         "stalled": stalled,

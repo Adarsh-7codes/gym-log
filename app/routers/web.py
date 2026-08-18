@@ -190,6 +190,7 @@ def dashboard(
     start_date: str = "",
     end_date: str = "",
     sort: str = "default",
+    view: str = "all",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
@@ -199,6 +200,11 @@ def dashboard(
     # (?user_id=) switches to that member's full log view.
     if is_trainer and user_id is None:
         roster = crud.member_roster(db, sort=sort)
+        new_members = [r for r in roster if r["is_new"]]
+        if view == "new":
+            shown = new_members
+        else:
+            shown = roster
         return templates.TemplateResponse(
             "dashboard.html",
             {
@@ -206,9 +212,14 @@ def dashboard(
                 "current_user": current_user,
                 "is_trainer": True,
                 "show_roster": True,
-                "roster": roster,
+                "roster": shown,
                 "summary": crud.roster_summary(roster),
                 "sort": sort if sort in crud.ROSTER_SORTS else "default",
+                # First-90-days cohort: where churn actually happens.
+                "view": "new" if view == "new" else "all",
+                "new_count": len(new_members),
+                "new_attention": sum(1 for r in new_members if r["cohort"].get("needs_attention")),
+                "new_member_days": crud.NEW_MEMBER_DAYS,
             },
         )
 
@@ -255,6 +266,10 @@ def dashboard(
             # Attendance is read-only everywhere except the trainer's Today screen.
             "sessions_this_month": crud.attendance_this_month(db, viewed_user_id),
             "attendance_streak": crud.attendance_streak(db, viewed_user_id),
+            # Talking points are notes for the trainer to speak from -- never
+            # rendered to the member as a verdict on themselves.
+            "talking_points": crud.talking_points(db, viewed_user_id) if viewed_member else [],
+            "cohort": crud.cohort_stats(db, viewed_member) if viewed_member else None,
         },
     )
 

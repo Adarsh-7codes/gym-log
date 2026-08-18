@@ -38,7 +38,7 @@
   {% if roster %}
   <table>
     <thead>
-      <tr><th>Member</th><th>Expires</th><th>Dues</th><th>Last session</th><th>Status</th><th></th></tr>
+      <tr><th>Member</th><th>Expires</th><th>Dues</th><th>This month</th><th>Last session</th><th>Status</th><th></th></tr>
     </thead>
     <tbody>
       {% for s in roster %}
@@ -53,6 +53,10 @@
         <td data-label="Dues">
           {% if s.has_dues %}<span class="flag flag-red">₹{{ '{:,.0f}'.format(s.dues) }}</span>
           {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td data-label="This month">
+          {% if s.sessions_this_month %}{{ s.sessions_this_month }}
+          {% else %}<span class="muted">0</span>{% endif %}
         </td>
         <td data-label="Last session">
           {% if s.last_date %}{{ s.last_date.strftime('%d %b') }} <span class="muted">({{ s.days_since }}d)</span>
@@ -84,6 +88,21 @@
 <div class="rolebanner {{ current_user.role.value }}">
   <span class="badge {{ current_user.role.value }}">{{ current_user.role.value }}</span>
   <span><strong>Member view</strong> — you see and manage only your own logs and planner.</span>
+</div>
+
+{# Member's own attendance: read-only, factual, no input. #}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">Your attendance</strong>
+  <div class="row" style="gap:28px;margin-top:10px">
+    <div>
+      <div style="font-size:22px;font-weight:700">{{ sessions_this_month }}</div>
+      <div class="muted" style="font-size:12px">session{{ '' if sessions_this_month == 1 else 's' }} this month</div>
+    </div>
+    <div>
+      <div style="font-size:22px;font-weight:700">{{ attendance_streak }}</div>
+      <div class="muted" style="font-size:12px">week streak{{ ' (train once a week to keep it)' if attendance_streak == 0 else '' }}</div>
+    </div>
+  </div>
 </div>
 
 {# Member's own membership: read-only, factual, no dues-chasing language. #}

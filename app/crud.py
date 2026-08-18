@@ -1,5 +1,5 @@
 import calendar
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote_plus
@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Attendance,
     BodyPart,
     Difficulty,
     Exercise,
@@ -303,10 +304,95 @@ def pending_dues_for(db: Session, user_id: int) -> Decimal:
     return Decimal(str(total or 0))
 
 
+# --- Attendance ---------------------------------------------------------
+
+
+def mark_attendance(db: Session, user_id: int, on: date, marked_by: Role) -> bool:
+    """Record that a member showed up. Idempotent: a repeat tap is a no-op.
+
+    Returns True if a new row was created, False if it already existed.
+    """
+    existing = db.scalar(
+        select(Attendance).where(Attendance.user_id == user_id, Attendance.date == on)
+    )
+    if existing is not None:
+        return False
+    db.add(Attendance(user_id=user_id, date=on, marked_by=marked_by))
+    db.commit()
+    return True
+
+
+def unmark_attendance(db: Session, user_id: int, on: date) -> bool:
+    """Undo a mis-tap. Returns True if a row was removed."""
+    existing = db.scalar(
+        select(Attendance).where(Attendance.user_id == user_id, Attendance.date == on)
+    )
+    if existing is None:
+        return False
+    db.delete(existing)
+    db.commit()
+    return True
+
+
+def attended_on(db: Session, on: date) -> set:
+    """Set of user_ids marked present on a given day."""
+    return set(db.scalars(select(Attendance.user_id).where(Attendance.date == on)).all())
+
+
+def attendance_this_month(db: Session, user_id: int, today: Optional[date] = None) -> int:
+    today = today or date.today()
+    first = today.replace(day=1)
+    return db.scalar(
+        select(func.count(Attendance.id)).where(
+            Attendance.user_id == user_id, Attendance.date >= first, Attendance.date <= today
+        )
+    ) or 0
+
+
+def attendance_counts_this_month(db: Session, today: Optional[date] = None) -> dict:
+    """user_id -> sessions this month, in one grouped query."""
+    today = today or date.today()
+    first = today.replace(day=1)
+    rows = db.execute(
+        select(Attendance.user_id, func.count(Attendance.id))
+        .where(Attendance.date >= first, Attendance.date <= today)
+        .group_by(Attendance.user_id)
+    ).all()
+    return {uid: count for uid, count in rows}
+
+
+def attendance_streak(db: Session, user_id: int, today: Optional[date] = None) -> int:
+    """Consecutive *weeks* with at least one session, counting back from this week.
+
+    Deliberately weekly, not daily: nobody trains 7 days a week, so a daily
+    streak would read as a constant failure. A week counts if the member
+    attended at least once in it.
+    """
+    today = today or date.today()
+    days = db.scalars(
+        select(Attendance.date).where(Attendance.user_id == user_id).order_by(Attendance.date.desc())
+    ).all()
+    if not days:
+        return 0
+    weeks_with_session = {d.isocalendar()[:2] for d in days}
+    streak = 0
+    cursor = today
+    while cursor.isocalendar()[:2] in weeks_with_session:
+        streak += 1
+        cursor -= timedelta(days=7)
+    return streak
+
+
+def last_attendance(db: Session, user_id: int) -> Optional[date]:
+    return db.scalar(
+        select(func.max(Attendance.date)).where(Attendance.user_id == user_id)
+    )
+
+
 # --- Progress / stall detection ----------------------------------------
 
 SESSIONS_TO_COMPARE = 3   # look at the last N logged sessions per exercise
-INACTIVE_DAYS = 10        # no logged session in this many days -> flag
+INACTIVE_DAYS = 10        # no session in this many days -> flag
 
 
 def _top_set_value(log: Log) -> tuple:
@@ -346,14 +432,23 @@ def member_status(db: Session, user: User) -> dict:
     logs = db.scalars(
         select(Log).where(Log.user_id == user.id).order_by(Log.date.desc(), Log.id.desc())
     ).all()
-    last_date = logs[0].date if logs else None
+    last_logged = logs[0].date if logs else None
+
+    # Activity = did they turn up. Attendance is the primary signal; a logged
+    # workout also counts as evidence of presence (you cannot log a session you
+    # did not do). This keeps a member who trains but never logs -- and one who
+    # logs on a day the trainer forgot to mark -- from being falsely flagged.
+    attended = last_attendance(db, user.id)
+    last_date = max([d for d in (attended, last_logged) if d is not None], default=None)
+
     days_since = (date.today() - last_date).days if last_date else None
     inactive = last_date is None or days_since >= INACTIVE_DAYS
     stalled = _stalled_exercises_from_logs(logs)
+    sessions_this_month = attendance_this_month(db, user.id)
 
     reasons = []
     if last_date is None:
-        reasons.append("No sessions logged yet")
+        reasons.append("No sessions yet")
     elif inactive:
         reasons.append(f"No session in {days_since} days")
     if stalled:
@@ -367,6 +462,9 @@ def member_status(db: Session, user: User) -> dict:
     return {
         "user": user,
         "last_date": last_date,
+        "last_logged": last_logged,
+        "last_attended": attended,
+        "sessions_this_month": sessions_this_month,
         "days_since": days_since,
         "inactive": inactive,
         "stalled": stalled,

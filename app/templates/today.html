@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Today · Gym Log{% endblock %}
+{% block nav_today %}active{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <div>
+    <h1>{% if is_today %}Today{% else %}{{ day.strftime('%a %d %b') }}{% endif %}</h1>
+    <p class="subtitle" style="margin:0">Tap a member to mark them present. Tap again to undo.</p>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:22px;font-weight:700">{{ present_count }}<span class="muted" style="font-size:14px;font-weight:400">/{{ rows|length }}</span></div>
+    <div class="muted" style="font-size:12px">marked in</div>
+  </div>
+</div>
+
+{# Step back/forward a day, for catching up the morning after. #}
+<div class="sortbar">
+  <a class="sortopt" href="/today?on={{ (day - one_day).isoformat() }}">← {{ (day - one_day).strftime('%a %d') }}</a>
+  {% if not is_today %}<a class="sortopt" href="/today">Jump to today</a>{% endif %}
+  {% if day < today_date %}<a class="sortopt" href="/today?on={{ (day + one_day).isoformat() }}">{{ (day + one_day).strftime('%a %d') }} →</a>{% endif %}
+</div>
+
+{% if rows %}
+<div class="attlist">
+  {% for r in rows %}
+  <form method="post" action="/attendance/{{ r.user.id }}/toggle" style="margin:0">
+    <input type="hidden" name="on" value="{{ day.isoformat() }}">
+    <button type="submit" class="attrow {% if r.present %}present{% endif %}">
+      <span class="attcheck">{% if r.present %}✓{% endif %}</span>
+      <span class="attmain">
+        <span class="attname">{{ r.user.name }}</span>
+        <span class="attmeta">{{ r.sessions_this_month }} session{{ '' if r.sessions_this_month == 1 else 's' }} this month</span>
+      </span>
+      <span class="attstate">{% if r.present %}Present{% else %}Mark{% endif %}</span>
+    </button>
+  </form>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel"><div class="empty">No members yet. Add one on the <a href="/members">Members</a> page.</div></div>
+{% endif %}
+{% endblock %}

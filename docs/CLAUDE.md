@@ -48,6 +48,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `MemberRoutine(user_id, exercise_id, body_part, date_added, assigned_by[member|trainer])` — a member's standing list of exercises per body part. Removing a row does **not** delete logs. `assigned_by` (**Phase 2**) records who prescribed it; pre-existing rows backfilled to `member`.
 - `SplitDay(user_id, weekday 0–6, body_part)` — the **Weekly Split**: multiple rows per weekday allowed (e.g. Mon = chest AND arms).
 - `Log(user_id, exercise_id, date, weight, reps, sets, next_action, notes, feeling[easy/moderate/tough], logged_by[member|trainer])` — historical performance. `logged_by` = who entered it.
+- `Attendance(user_id, date, marked_by[trainer|member], created_at)` — **Phase 3**. Ground truth for "did they come", independent of logging. **Unique `(user_id, date)`** makes repeat taps idempotent.
 - `Membership(user_id, plan_start, duration_months, expires_on, amount[Numeric(10,2)], status[paid|pending], paid_on, notes, created_at)` — **Phase 1**. One row per membership term; several rows per member = renewal history. "Current" = latest `plan_start`. `expires_on` is computed on save via `crud.add_months()` and **stored**, never derived at read time. No card/gateway/invoice data by design — the trainer collects cash/UPI and records the outcome.
 - `PlanDay` / `PlanItem` — older weekly planner (per-day focus + target sets/reps). Now **trainer-only** in nav; superseded for members by SplitDay + MemberRoutine.
 
@@ -60,6 +61,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - **Trainer edits member routine/split** (**Phase 2**): `/library?user_id=N` and `/split?user_id=N` operate on that member (trainer only — `crud.resolve_target_user()` makes a member's forged `user_id` fall back to self). Entry points are **Edit split / Edit routine** on the member's page; both screens show an "Editing X's …" banner. Trainer-assigned exercises show an **"assigned by your trainer"** badge on the member's log screen.
 - **Demo links**: every exercise on the member's day view has a **How?** link via `crud.demo_link()` — uses `Exercise.demo_url` when the trainer sets one (new optional field on the `/exercises` form), otherwise falls back to a **YouTube search** for the exercise name. Deliberately a search, not a hardcoded video id, so links can't rot or point at the wrong lift.
 - **Membership & dues** (**Phase 1**, trainer-only writes): on a member's page — current plan, expiry, payment status, full renewal history, "Add renewal" form and one-click **Mark paid**. Members see their own *"Valid till …"* + payment history **read-only**, with no dues-chasing language and no access to anyone else's. Currency is ₹ (display only).
+- **Attendance** (**Phase 3**): trainer-only **`/today`** screen — one big tap target per member (one-handed phone use), tap again to un-mark, shows sessions-this-month, unmarked members sorted first, and `?on=` to catch up a previous day. Roster gains a **sessions this month** column. Members see their own count + **week streak** read-only (no input; 403 on `/today` and the toggle).
+- **Activity signal**: inactivity is sourced from **attendance**, with a logged workout also counting as evidence of presence (you can't log a session you didn't do). This is a deliberate softening of "replace logs with attendance": a strict swap would flag every member the day attendance ships (empty table), and would also flag someone who logs on a day the trainer forgot to mark. `last_date = max(last_attendance, last_log)`.
 - **Stall detection** (`app/crud.py`): per exercise, compares the last **3** sessions' top `(weight, reps)`; no new PR → stalled. Member flagged if any exercise stalled OR no session in **10** days. Constants: `SESSIONS_TO_COMPARE=3`, `INACTIVE_DAYS=10`, `EXPIRY_SOON_DAYS=7`.
 - **Progress** (`/progress`): dependency-free inline-SVG charts — weight-over-time per exercise, weekly volume bars, feeling breakdown.
 - JSON API under `/api/*` mirrors auth/exercises/logs/users; interactive docs at `/docs`.
@@ -71,6 +74,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/members` (trainer): list + create member accounts.
 - `/members/{user_id}/membership` POST (trainer): record a membership term.
 - `/membership/{id}/paid` POST, `/membership/{id}/delete` POST (trainer).
+- `/today` (trainer): attendance screen. `/attendance/{user_id}/toggle` POST (trainer).
 - `/exercises` (trainer): manage the raw exercise list.
 - `/danger/reset` — demo reset, **local only** (see §10).
 - `/register` — 403 once a trainer exists (renders `registration_closed.html`).
@@ -100,7 +104,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `d4f3aaa` add this project-memory doc
 - `987a79c` _(Phase 0)_ security hardening: local-only reset, shared `require_trainer_web`, closed self-registration, `docs/authz-check.md`
 - `4555fef` _(Phase 1)_ membership & dues: `Membership` table, roster expiry/dues columns + summary strip + sorting, trainer renewal/mark-paid, member read-only view
-- _(Phase 2)_ trainer edits member routine/split: `assigned_by` on `MemberRoutine`, `?user_id=` targeting on `/library` + `/split`, demo links, `resolve_planner_target` → `resolve_target_user`
+- `d2cea67` _(Phase 2)_ trainer edits member routine/split: `assigned_by` on `MemberRoutine`, `?user_id=` targeting on `/library` + `/split`, demo links, `resolve_planner_target` → `resolve_target_user`
+- _(Phase 3)_ attendance: `Attendance` table, trainer `/today` screen, attendance-sourced inactivity, sessions-this-month column, member read-only count + streak
 
 ## 12b. Positioning (trainer-first)
 The app is sold to the **trainer/gym owner**, not to members. The trainer is the only guaranteed daily user; members attend ~1.5–2×/week and few will type into an app. Features are judged on: *does it make the trainer's day easier, or help him sell/retain memberships?* Member screens are kept only where they need **near-zero data entry** — all existing member features (Library, Weekly Split, fast day-based logging, progress) are retained. Roadmap: `docs/gymlog-trainer-first-prompt.md` (Phases 1–6: memberships & dues, trainer-edits-routines, attendance, talking points, overload targets, body weight).

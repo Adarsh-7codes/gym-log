@@ -5,7 +5,7 @@ pages depend on `get_current_user_web`, which raises WebAuthRequired when the
 cookie is missing/invalid -- main.py maps that to a redirect to /login.
 """
 import os
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
@@ -252,6 +252,9 @@ def dashboard(
             "membership_history": crud.membership_history(db, viewed_user_id),
             "today": date.today(),
             "expiry_soon_days": crud.EXPIRY_SOON_DAYS,
+            # Attendance is read-only everywhere except the trainer's Today screen.
+            "sessions_this_month": crud.attendance_this_month(db, viewed_user_id),
+            "attendance_streak": crud.attendance_streak(db, viewed_user_id),
         },
     )
 
@@ -725,6 +728,68 @@ def reset_do(
         "<p><a href='/register'>Register now →</a> The first account becomes the trainer.</p>"
         "</div>"
     )
+
+
+# --- Attendance (trainer marks; members read only) ----------------------
+
+
+@router.get("/today", response_class=HTMLResponse)
+def today_page(
+    request: Request,
+    on: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trainer_web),
+):
+    try:
+        day = _opt_date(on) or date.today()
+    except ValueError:
+        day = date.today()
+    members = db.scalars(select(User).where(User.role == Role.member).order_by(User.name)).all()
+    present = crud.attended_on(db, day)
+    counts = crud.attendance_counts_this_month(db)
+    rows = [
+        {
+            "user": m,
+            "present": m.id in present,
+            "sessions_this_month": counts.get(m.id, 0),
+        }
+        for m in members
+    ]
+    # Present members drop to the bottom so the "still to mark" list stays short.
+    rows.sort(key=lambda r: (r["present"], r["user"].name.lower()))
+    return templates.TemplateResponse(
+        "today.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "rows": rows,
+            "day": day,
+            "is_today": day == date.today(),
+            "present_count": len(present),
+            "today_date": date.today(),
+            "one_day": timedelta(days=1),
+        },
+    )
+
+
+@router.post("/attendance/{user_id}/toggle")
+def attendance_toggle(
+    user_id: int,
+    on: str = Form(""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trainer_web),
+):
+    try:
+        day = _opt_date(on) or date.today()
+    except ValueError:
+        day = date.today()
+    target = db.get(User, user_id)
+    if target is not None and target.role == Role.member:
+        # Idempotent by (user_id, date): a repeat tap toggles rather than duplicating.
+        if not crud.mark_attendance(db, user_id, day, current_user.role):
+            crud.unmark_attendance(db, user_id, day)
+    suffix = "" if day == date.today() else f"?on={day.isoformat()}"
+    return RedirectResponse(url=f"/today{suffix}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Membership & dues (trainer only) -----------------------------------

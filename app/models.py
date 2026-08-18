@@ -102,6 +102,24 @@ class Membership(Base):
     user = relationship("User", back_populates="memberships")
 
 
+class Attendance(Base):
+    """One member showing up on one day.
+
+    Ground truth for "did they come", independent of whether they logged
+    anything. The unique (user_id, date) constraint makes repeat taps on the
+    trainer's Today screen idempotent rather than duplicating rows.
+    """
+
+    __tablename__ = "attendance"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_attendance_user_date"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    marked_by = Column(SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.trainer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Exercise(Base):
     __tablename__ = "exercises"
 

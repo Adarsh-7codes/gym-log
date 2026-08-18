@@ -187,6 +187,20 @@
     .exopt:hover { border-color: var(--accent); }
     .exopt.selected { border-color: var(--accent); background: rgba(79,140,255,.12); }
     .exopt .lasthint { font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+    /* quick-log exercise row: pick button + "How?" demo link
+       (distinct from .exrow used by the library's checkbox list) */
+    .pickrow { display: flex; gap: 8px; align-items: stretch; }
+    .pickrow .exopt { flex: 1; }
+    .howto { flex: 0 0 auto; display: flex; align-items: center; padding: 0 14px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+      font-size: 12px; font-weight: 600; text-decoration: none; }
+    .howto:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+    .assigned { display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
+      color: #241a00; background: var(--trainer); vertical-align: middle; }
+    .editbanner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px;
+      background: rgba(232,181,61,.12); border: 1px solid var(--trainer); border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 18px; color: var(--text); }
     .picked-bar { font-size: 14px; color: var(--muted); margin-bottom: 14px; }
     .picked-bar strong { color: var(--text); }
     .steprow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }

@@ -2,12 +2,20 @@
 {% block title %}Weekly Split · Gym Log{% endblock %}
 {% block nav_split %}active{% endblock %}
 {% block content %}
+{% if editing_other %}
+<div class="editbanner">
+  <span>Editing <strong>{{ target_user.name }}</strong>'s weekly split</span>
+  <a href="/dashboard?user_id={{ target_user.id }}">← back to member</a>
+</div>
+{% endif %}
+
 <h1>Weekly split</h1>
 <p class="subtitle">Choose which body part(s) you train each day. Your log screen then shows only that day's exercises. You can pick more than one per day — e.g. Chest + Arms.</p>
 
 {% if saved %}<div class="ok-flash">✓ Split saved. Your log screen now follows this each week.</div>{% endif %}
 
 <form method="post" action="/split">
+  {% if editing_other %}<input type="hidden" name="user_id" value="{{ target_user.id }}">{% endif %}
   <div class="grid7">
     {% for d in days %}
     <div class="daycard">

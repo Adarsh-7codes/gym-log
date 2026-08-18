@@ -40,13 +40,20 @@
     <div class="ex-group-label" style="text-transform:capitalize;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.04em;margin:6px 2px 2px">{{ bp.value }}</div>
     {% for ex in exs %}
     {% set L = last[ex.id] if ex.id in last else None %}
-    <button type="button" class="exopt" data-id="{{ ex.id }}" data-name="{{ ex.name }}"
-            data-weight="{{ L.weight if L and L.weight is not none else '' }}"
-            data-reps="{{ L.reps if L and L.reps is not none else '' }}">
-      <span class="exname">{{ ex.name }}</span>
-      {% if L and L.weight is not none %}<span class="lasthint">last {{ L.weight }}{% if L.reps %}×{{ L.reps }}{% endif %}</span>
-      {% else %}<span class="lasthint muted">no history</span>{% endif %}
-    </button>
+    <div class="pickrow">
+      <button type="button" class="exopt" data-id="{{ ex.id }}" data-name="{{ ex.name }}"
+              data-weight="{{ L.weight if L and L.weight is not none else '' }}"
+              data-reps="{{ L.reps if L and L.reps is not none else '' }}">
+        <span class="exname">
+          {{ ex.name }}
+          {% if ex.id in trainer_assigned %}<span class="assigned">assigned by your trainer</span>{% endif %}
+        </span>
+        {% if L and L.weight is not none %}<span class="lasthint">last {{ L.weight }}{% if L.reps %}×{{ L.reps }}{% endif %}</span>
+        {% else %}<span class="lasthint muted">no history</span>{% endif %}
+      </button>
+      <a class="howto" href="{{ demo_link(ex) }}" target="_blank" rel="noopener noreferrer"
+         title="How to do {{ ex.name }}">How?</a>
+    </div>
     {% endfor %}
     {% endfor %}
   </div>

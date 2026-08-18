@@ -19,21 +19,35 @@ def ensure_schema() -> None:
     column added by hand. Idempotent; safe on every startup, SQLite or Postgres.
     """
     insp = inspect(engine)
-    if "logs" not in insp.get_table_names():
-        return
-    columns = {c["name"] for c in insp.get_columns("logs")}
-    if "feeling" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE logs ADD COLUMN feeling VARCHAR(20)"))
-    if "logged_by" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE logs ADD COLUMN logged_by VARCHAR(20)"))
-            # Rows predating this column were entered before trainer-logging
-            # was distinguished -- treat them as member-entered.
-            conn.execute(text("UPDATE logs SET logged_by = 'member' WHERE logged_by IS NULL"))
+    tables = set(insp.get_table_names())
+
+    # Each block guards its own table: one missing table must never silently
+    # skip the migrations for the others.
+    if "logs" in tables:
+        columns = {c["name"] for c in insp.get_columns("logs")}
+        if "feeling" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE logs ADD COLUMN feeling VARCHAR(20)"))
+        if "logged_by" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE logs ADD COLUMN logged_by VARCHAR(20)"))
+                # Rows predating this column were entered before trainer-logging
+                # was distinguished -- treat them as member-entered.
+                conn.execute(text("UPDATE logs SET logged_by = 'member' WHERE logged_by IS NULL"))
+
+    # Phase 2: who prescribed each routine entry. Pre-existing rows were all
+    # self-selected by the member, so backfill them to 'member'.
+    if "member_routines" in tables:
+        routine_cols = {c["name"] for c in insp.get_columns("member_routines")}
+        if "assigned_by" not in routine_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE member_routines ADD COLUMN assigned_by VARCHAR(20)"))
+                conn.execute(
+                    text("UPDATE member_routines SET assigned_by = 'member' WHERE assigned_by IS NULL")
+                )
 
     # Exercise Library columns added after the exercises table first existed.
-    if "exercises" in insp.get_table_names():
+    if "exercises" in tables:
         ex_cols = {c["name"] for c in insp.get_columns("exercises")}
         for col, ddl in (
             ("body_part", "ALTER TABLE exercises ADD COLUMN body_part VARCHAR(20)"),

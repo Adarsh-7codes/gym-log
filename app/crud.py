@@ -2,6 +2,7 @@ import calendar
 from datetime import date
 from decimal import Decimal
 from typing import Optional
+from urllib.parse import quote_plus
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -131,8 +132,13 @@ def delete_log(db: Session, log: Log) -> None:
 # --- Weekly planner -----------------------------------------------------
 
 
-def resolve_planner_target(current_user: User, user_id: Optional[int]) -> int:
-    """Whose planner is being edited. Members are always locked to themselves."""
+def resolve_target_user(current_user: User, user_id: Optional[int]) -> int:
+    """Whose data is being edited (planner, routine, split).
+
+    Only a trainer may act on someone else. A member passing a forged
+    ?user_id= silently falls back to their own id -- enforced here, not in
+    the template.
+    """
     if user_id is not None and user_id != current_user.id and current_user.role == Role.trainer:
         return user_id
     return current_user.id
@@ -488,12 +494,18 @@ def routine_grouped(db: Session, user_id: int) -> dict:
     return groups
 
 
-def set_routine_for_body_part(db: Session, user_id: int, body_part: BodyPart, exercise_ids) -> None:
+def set_routine_for_body_part(
+    db: Session,
+    user_id: int,
+    body_part: BodyPart,
+    exercise_ids,
+    assigned_by: Role = Role.member,
+) -> None:
     """Make the member's routine for one body_part exactly `exercise_ids`.
 
     Adds newly selected, removes unchecked. Removal deletes ONLY the
     MemberRoutine rows -- historical Log entries are a separate table and are
-    never touched here.
+    never touched here. `assigned_by` records who prescribed the new rows.
     """
     valid = set(
         db.scalars(select(Exercise.id).where(Exercise.body_part == body_part)).all()
@@ -512,8 +524,40 @@ def set_routine_for_body_part(db: Session, user_id: int, body_part: BodyPart, ex
             db.delete(row)  # remove from routine only; logs stay intact
     for ex_id in want:
         if ex_id not in have:
-            db.add(MemberRoutine(user_id=user_id, exercise_id=ex_id, body_part=body_part, date_added=date.today()))
+            db.add(
+                MemberRoutine(
+                    user_id=user_id,
+                    exercise_id=ex_id,
+                    body_part=body_part,
+                    date_added=date.today(),
+                    assigned_by=assigned_by,
+                )
+            )
     db.commit()
+
+
+def trainer_assigned_exercise_ids(db: Session, user_id: int) -> set:
+    """Exercise ids in this member's routine that the trainer prescribed."""
+    return set(
+        db.scalars(
+            select(MemberRoutine.exercise_id).where(
+                MemberRoutine.user_id == user_id, MemberRoutine.assigned_by == Role.trainer
+            )
+        ).all()
+    )
+
+
+def demo_link(exercise: Exercise) -> str:
+    """A always-resolvable 'how to do this' link for an exercise.
+
+    Uses the trainer-set demo_url when present. Otherwise falls back to a
+    YouTube search for the exercise name -- deliberately a search rather than
+    a hardcoded video id, so links can never rot or point at the wrong lift.
+    """
+    if exercise.demo_url:
+        return exercise.demo_url
+    query = quote_plus(f"{exercise.name} proper form")
+    return f"https://www.youtube.com/results?search_query={query}"
 
 
 def remove_from_routine(db: Session, user_id: int, exercise_id: int) -> None:

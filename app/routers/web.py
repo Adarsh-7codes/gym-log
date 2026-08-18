@@ -312,6 +312,8 @@ def new_log_page(
                 "day_name": crud.WEEKDAY_NAMES[selected_wd],
                 "selected_weekday": selected_wd,
                 "day_picker": day_picker,
+                "trainer_assigned": crud.trainer_assigned_exercise_ids(db, current_user.id),
+                "demo_link": crud.demo_link,
             },
         )
 
@@ -496,6 +498,7 @@ def create_exercise_submit(
     difficulty: str = Form(""),
     equipment: str = Form(""),
     instructions: str = Form(""),
+    demo_url: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_trainer_web),
 ):
@@ -515,6 +518,9 @@ def create_exercise_submit(
             difficulty=diff,
             equipment=equipment.strip() or None,
             instructions=instructions.strip() or None,
+            # Optional: a specific demo video. Left empty, the member's log
+            # screen falls back to a YouTube search for the exercise name.
+            demo_url=demo_url.strip() or None,
         )
     )
     db.commit()
@@ -537,13 +543,22 @@ def delete_exercise_submit(
 # --- Exercise Library + Member Routine ----------------------------------
 
 
+def _target_suffix(target_id: int, current_user: User, sep: str = "&") -> str:
+    """Keep ?user_id= in redirects while a trainer edits someone else's data."""
+    return f"{sep}user_id={target_id}" if target_id != current_user.id else ""
+
+
 @router.get("/library", response_class=HTMLResponse)
 def library_page(
     request: Request,
     part: Optional[str] = None,
+    user_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
+    # Only a trainer may target another user; a member falls back to themselves.
+    target_id = crud.resolve_target_user(current_user, user_id)
+    target_user = db.get(User, target_id) or current_user
     library = crud.library_grouped(db)  # {BodyPart: [Exercise]}
     body_parts = [bp for bp in crud.BODY_PARTS if bp in library]
     # active tab: requested body_part if valid, else the first with exercises
@@ -560,7 +575,10 @@ def library_page(
             "library": library,
             "body_parts": body_parts,
             "active": active,
-            "routine_ids": crud.routine_exercise_ids(db, current_user.id),
+            "routine_ids": crud.routine_exercise_ids(db, target_id),
+            "target_user": target_user,
+            "editing_other": target_id != current_user.id,
+            "demo_link": crud.demo_link,
         },
     )
 
@@ -569,28 +587,34 @@ def library_page(
 def library_set_routine(
     body_part: str,
     exercise_ids: list[str] = Form(default=[]),
+    user_id: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
+    target_id = crud.resolve_target_user(current_user, _opt_int(user_id))
     bp = next((b for b in BodyPart if b.value == body_part), None)
     if bp is None:
         return RedirectResponse(url="/library", status_code=status.HTTP_303_SEE_OTHER)
     # The checked boxes become this member's routine for that body_part
     # (adds new, removes unchecked -- logs are untouched).
     ids = [int(x) for x in exercise_ids if x.strip().isdigit()]
-    crud.set_routine_for_body_part(db, current_user.id, bp, ids)
-    return RedirectResponse(url=f"/library?part={bp.value}", status_code=status.HTTP_303_SEE_OTHER)
+    crud.set_routine_for_body_part(db, target_id, bp, ids, assigned_by=current_user.role)
+    dest = f"/library?part={bp.value}{_target_suffix(target_id, current_user)}"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/library/remove/{exercise_id}")
 def library_remove(
     exercise_id: int,
     part: str = Form(""),
+    user_id: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
-    crud.remove_from_routine(db, current_user.id, exercise_id)  # routine only, keeps logs
+    target_id = crud.resolve_target_user(current_user, _opt_int(user_id))
+    crud.remove_from_routine(db, target_id, exercise_id)  # routine only, keeps logs
     dest = f"/library?part={part}" if part else "/library"
+    dest += _target_suffix(target_id, current_user, "&" if "?" in dest else "?")
     return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -601,10 +625,13 @@ def library_remove(
 def split_page(
     request: Request,
     saved: Optional[str] = None,
+    user_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
-    split = crud.get_split(db, current_user.id)
+    target_id = crud.resolve_target_user(current_user, user_id)
+    target_user = db.get(User, target_id) or current_user
+    split = crud.get_split(db, target_id)
     days = [
         {"index": i, "name": crud.WEEKDAY_NAMES[i], "parts": {bp.value for bp in split.get(i, [])}}
         for i in range(7)
@@ -617,6 +644,8 @@ def split_page(
             "days": days,
             "body_parts": [bp.value for bp in BodyPart],
             "saved": saved,
+            "target_user": target_user,
+            "editing_other": target_id != current_user.id,
         },
     )
 
@@ -630,14 +659,17 @@ def split_save(
     d4: list[str] = Form(default=[]),
     d5: list[str] = Form(default=[]),
     d6: list[str] = Form(default=[]),
+    user_id: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
+    target_id = crud.resolve_target_user(current_user, _opt_int(user_id))
     # Each weekday posts a multi-checkbox field d0..d6 (list of body_part values).
     for weekday, values in enumerate([d0, d1, d2, d3, d4, d5, d6]):
         parts = [b for b in BodyPart if b.value in set(values)]
-        crud.set_split_for_day(db, current_user.id, weekday, parts)
-    return RedirectResponse(url="/split?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+        crud.set_split_for_day(db, target_id, weekday, parts)
+    dest = f"/split?saved=1{_target_suffix(target_id, current_user)}"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Danger zone: LOCAL-ONLY demo reset --------------------------------
@@ -830,7 +862,7 @@ def planner_page(
     current_user: User = Depends(get_current_user_web),
 ):
     is_trainer = current_user.role == Role.trainer
-    target_user_id = crud.resolve_planner_target(current_user, user_id)
+    target_user_id = crud.resolve_target_user(current_user, user_id)
     target_user = db.get(User, target_user_id) or current_user
     week = crud.get_week(db, target_user_id)
     days = [
@@ -863,7 +895,7 @@ def planner_set_focus(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
-    target = crud.resolve_planner_target(current_user, _opt_int(user_id))
+    target = crud.resolve_target_user(current_user, _opt_int(user_id))
     if 0 <= weekday <= 6:
         crud.set_focus(db, target, weekday, focus.strip() or None)
     return RedirectResponse(url=_planner_redirect(target, current_user), status_code=status.HTTP_303_SEE_OTHER)
@@ -880,7 +912,7 @@ def planner_add_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
-    target = crud.resolve_planner_target(current_user, _opt_int(user_id))
+    target = crud.resolve_target_user(current_user, _opt_int(user_id))
     if 0 <= weekday <= 6:
         try:
             crud.add_plan_item(
@@ -904,7 +936,7 @@ def planner_delete_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
-    target = crud.resolve_planner_target(current_user, _opt_int(user_id))
+    target = crud.resolve_target_user(current_user, _opt_int(user_id))
     crud.delete_plan_item(db, current_user, item_id, target)
     return RedirectResponse(url=_planner_redirect(target, current_user), status_code=status.HTTP_303_SEE_OTHER)
 

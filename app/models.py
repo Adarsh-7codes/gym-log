@@ -150,6 +150,11 @@ class MemberRoutine(Base):
     # denormalized for fast per-body_part queries (matches exercise.body_part at add time)
     body_part = Column(SAEnum(BodyPart, native_enum=False, length=20), nullable=True, index=True)
     date_added = Column(Date, nullable=False, default=date.today)
+    # Who put this exercise in the routine: the member themselves, or their
+    # trainer prescribing it. Existing rows backfill to `member`.
+    assigned_by = Column(
+        SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.member
+    )
 
     exercise = relationship("Exercise")
 

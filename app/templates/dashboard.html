@@ -215,7 +215,13 @@
 </div>
 
 <div class="panel" style="margin-bottom:20px">
-  <strong style="font-size:14px">Routine</strong>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <strong style="font-size:14px">Routine &amp; split</strong>
+    <span style="display:flex;gap:8px">
+      <a class="btn ghost" href="/split?user_id={{ viewed_member.id }}" style="padding:6px 12px;font-size:13px">Edit split</a>
+      <a class="btn ghost" href="/library?user_id={{ viewed_member.id }}" style="padding:6px 12px;font-size:13px">Edit routine</a>
+    </span>
+  </div>
   {% if routine %}
   <div style="margin-top:10px">
     {% for bp, exs in routine.items() %}

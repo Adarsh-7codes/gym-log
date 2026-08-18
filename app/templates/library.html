@@ -2,8 +2,18 @@
 {% block title %}Exercise Library · Gym Log{% endblock %}
 {% block nav_library %}active{% endblock %}
 {% block content %}
+{% if editing_other %}
+<div class="editbanner">
+  <span>Editing <strong>{{ target_user.name }}</strong>'s routine</span>
+  <a href="/dashboard?user_id={{ target_user.id }}">← back to member</a>
+</div>
+{% endif %}
+
 <h1>Exercise Library</h1>
-<p class="subtitle">Pick the exercises for each body part. They stay in your routine and show up every time you log — no need to re-pick.</p>
+<p class="subtitle">
+  {% if editing_other %}Pick the exercises {{ target_user.name }} should train for each body part. They stay in their routine and appear every time they log.
+  {% else %}Pick the exercises for each body part. They stay in your routine and show up every time you log — no need to re-pick.{% endif %}
+</p>
 
 {% if not body_parts %}
 <div class="panel"><div class="empty">No exercises available yet.</div></div>
@@ -11,12 +21,13 @@
 
 <div class="tabs">
   {% for bp in body_parts %}
-  <a href="/library?part={{ bp.value }}" class="tab {% if active == bp %}active{% endif %}">{{ bp.value }}</a>
+  <a href="/library?part={{ bp.value }}{% if editing_other %}&user_id={{ target_user.id }}{% endif %}" class="tab {% if active == bp %}active{% endif %}">{{ bp.value }}</a>
   {% endfor %}
 </div>
 
 {% set exercises = library[active] %}
 <form method="post" action="/library/{{ active.value }}">
+  {% if editing_other %}<input type="hidden" name="user_id" value="{{ target_user.id }}">{% endif %}
   <div class="panel" style="padding:0;overflow:hidden">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)">
       <strong style="text-transform:capitalize">{{ active.value }} exercises</strong>

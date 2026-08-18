@@ -137,6 +137,45 @@ def OL(items):
     story.append(Spacer(1, 4))
 
 
+from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String  # noqa: E402
+
+
+def _box(d, x, y, w, h, title, sub=None, fill=colors.white, stroke=RULE, tcol=INK, tsize=8.6):
+    d.add(Rect(x, y, w, h, fillColor=fill, strokeColor=stroke, strokeWidth=0.9, rx=3, ry=3))
+    if sub:
+        d.add(String(x + w / 2, y + h / 2 + 2.5, title, fontName="Body-Bold", fontSize=tsize,
+                     fillColor=tcol, textAnchor="middle"))
+        d.add(String(x + w / 2, y + h / 2 - 8, sub, fontName="Body", fontSize=6.9,
+                     fillColor=MUTED, textAnchor="middle"))
+    else:
+        d.add(String(x + w / 2, y + h / 2 - 3, title, fontName="Body-Bold", fontSize=tsize,
+                     fillColor=tcol, textAnchor="middle"))
+
+
+def _arrow(d, x1, y1, x2, y2, col=ACCENT, label=None, lx=None, dashed=False):
+    ln = Line(x1, y1, x2, y2, strokeColor=col, strokeWidth=1.1)
+    if dashed:
+        ln.strokeDashArray = [2.5, 2.5]
+    d.add(ln)
+    import math
+    ang = math.atan2(y2 - y1, x2 - x1)
+    s = 4.4
+    d.add(Polygon([x2, y2,
+                   x2 - s * math.cos(ang - 0.42), y2 - s * math.sin(ang - 0.42),
+                   x2 - s * math.cos(ang + 0.42), y2 - s * math.sin(ang + 0.42)],
+                  fillColor=col, strokeColor=col))
+    if label:
+        d.add(String(lx if lx is not None else (x1 + x2) / 2 + 5, (y1 + y2) / 2 + 4.5, label,
+                     fontName="Body", fontSize=6.6, fillColor=MUTED))
+
+
+def DRAW(d, caption=None):
+    story.append(d)
+    if caption:
+        story.append(Paragraph(rich(caption), S["small"]))
+    story.append(Spacer(1, 6))
+
+
 def TBL(headers, rows, widths, align_center=None, zebra=True):
     align_center = align_center or []
     data = [[Paragraph(rich(h), S["cellh"]) for h in headers]]
@@ -194,10 +233,11 @@ Gap(10)
 H3("How to read this")
 UL([
     "**Parts 1&ndash;2** build the mental model. Read these even if you skip everything else.",
-    "**Parts 3&ndash;6** are the technical core: technologies, database, security, features.",
-    "**Part 7&ndash;8** are about testing &mdash; what we tested, what broke, and what I did about it. "
+    "**Part 3** is the architecture &mdash; the shape of the system. The most reusable section.",
+    "**Parts 4&ndash;7** are the technical core: technologies, database, security, features.",
+    "**Parts 8&ndash;9** are about testing &mdash; what we tested, what broke, and what I did about it. "
     "This is where most of the real learning is.",
-    "**Parts 9&ndash;12** are honest self-assessment: weaknesses, what to improve, and the questions "
+    "**Parts 10&ndash;14** are honest self-assessment: weaknesses, what to improve, and the questions "
     "you should be asking.",
     "There is a **glossary** at the end. If a word is unfamiliar, it is probably there.",
 ])
@@ -317,7 +357,271 @@ NewPage()
 # ===================================================================
 # PART 3 - TECH
 # ===================================================================
-H1("Part 3 &mdash; Every technology, and why")
+H1("Part 3 &mdash; The architecture")
+
+P("**Architecture is the shape of the system** &mdash; what the pieces are, which piece is allowed "
+  "to talk to which, and where each kind of decision is made. It is not the code. You can read "
+  "every line of this app and still not know that //authorisation lives in one file//. That fact "
+  "is architecture, and it only exists if someone writes it down.")
+
+H2("3.1 The layered view")
+P("Every request travels down through these layers and the answer travels back up. Each layer has "
+  "exactly one job.")
+
+d = Drawing(468, 300)
+lay = [
+    ("Browser (phone)", "HTML + ~40 lines of JS", colors.HexColor("#eef3fb")),
+    ("Render edge  —  HTTPS", "TLS, routing, sleeps when idle", colors.HexColor("#f4f6f9")),
+    ("FastAPI routing   main.py + routers/", "matches URL → Python function", colors.white),
+    ("deps.py   —   AUTHENTICATION", "reads the cookie: who are you?", colors.HexColor("#fdf6e3")),
+    ("crud.py   —   AUTHORISATION + LOGIC", "what may you see? all business rules", colors.HexColor("#fdecea")),
+    ("models.py + SQLAlchemy", "Python objects ↔ table rows", colors.white),
+    ("PostgreSQL  (SQLite locally)", "the only thing that survives a restart", colors.HexColor("#eaf5ef")),
+]
+top = 288
+bh, gap = 30, 10
+for i, (t, s_, c) in enumerate(lay):
+    y = top - i * (bh + gap) - bh
+    _box(d, 96, y, 276, bh, t, s_, fill=c)
+    if i:
+        _arrow(d, 234, y + bh + gap - 1.5, 234, y + bh + 1.5)
+# templates side-branch
+_box(d, 384, top - 2 * (bh + gap) - bh, 78, bh, "templates/", "Jinja2 → HTML", fill=colors.white)
+_arrow(d, 384, top - 2 * (bh + gap) - bh + 15, 374, top - 2 * (bh + gap) - bh + 15, col=MUTED)
+d.add(String(6, top - 3 * (bh + gap) - 8, "REQUEST", fontName="Body-Bold", fontSize=7, fillColor=MUTED))
+_arrow(d, 40, top - 10, 40, 20, col=MUTED)
+_arrow(d, 60, 20, 60, top - 10, col=OKC)
+d.add(String(66, top - 3 * (bh + gap) - 8, "RESPONSE", fontName="Body-Bold", fontSize=7, fillColor=OKC))
+DRAW(d, "The two coloured layers are the ones that decide whether you are allowed to be here. "
+        "Everything above them is plumbing; everything below is storage.")
+
+H2("3.2 Trace one real request")
+P("A member taps **Save set**. Here is every layer it touches:")
+TBL(["Layer", "What it does", "What it does NOT do"],
+    [["Browser", "Sends `POST /logs/new` with exercise, weight, reps.",
+      "Decide anything. It can be lied to and bypassed entirely."],
+     ["FastAPI route", "Matches the URL, converts form fields to Python types.",
+      "Check permissions itself."],
+     ["`deps.py`", "Reads the cookie, validates the JWT signature, loads the `User`. No valid "
+      "token → redirect to login.", "Decide what that user may do."],
+     ["`crud.create_log`", "**Decides the owner.** A member can only write their own row; a "
+      "trainer writing for a member records `logged_by=trainer`.",
+      "Trust the `user_id` the browser sent."],
+     ["SQLAlchemy", "Turns the object into a safe, parameterised `INSERT`.",
+      "Allow raw text into SQL (this is what blocks injection)."],
+     ["Database", "Stores the row permanently.", "Enforce business rules."]],
+    [26, 62, 62])
+
+Callout("**Read the fourth row again.** That is the entire security model of this application in "
+        "one sentence: //the layer that touches the data decides who owns it, and it never trusts "
+        "what the browser said.// If you understand only one thing about this architecture, make "
+        "it that one.")
+
+H2("3.3 The module map")
+P("Which file does what, and &mdash; more importantly &mdash; which way the arrows point. Arrows "
+  "mean //depends on//.")
+
+d = Drawing(468, 236)
+_box(d, 176, 200, 116, 26, "main.py", "starts app, wires routers", fill=colors.HexColor("#eef3fb"))
+_box(d, 60, 152, 116, 26, "routers/web.py", "1230 lines — pages")
+_box(d, 292, 152, 116, 26, "routers/*.py", "JSON API")
+_box(d, 176, 104, 116, 26, "crud.py", "1124 lines — rules", fill=colors.HexColor("#fdecea"))
+_box(d, 20, 104, 108, 26, "deps.py", "auth guards", fill=colors.HexColor("#fdf6e3"))
+_box(d, 340, 104, 108, 26, "templates/", "Jinja2 HTML")
+_box(d, 176, 56, 116, 26, "models.py", "the 11 tables")
+_box(d, 176, 8, 116, 26, "database.py", "engine + migrations", fill=colors.HexColor("#eaf5ef"))
+_box(d, 330, 8, 118, 26, "config.py", "env vars / settings", fill=colors.HexColor("#eaf5ef"))
+_arrow(d, 210, 200, 140, 178)
+_arrow(d, 258, 200, 330, 178)
+_arrow(d, 130, 152, 200, 130)
+_arrow(d, 338, 152, 268, 130)
+_arrow(d, 118, 152, 74, 130, col=MUTED)
+_arrow(d, 176, 156, 340, 128, col=MUTED, dashed=True)
+_arrow(d, 234, 104, 234, 82)
+_arrow(d, 234, 56, 234, 34)
+_arrow(d, 292, 21, 330, 21, col=MUTED)
+DRAW(d, "Solid = calls into. Dashed = renders with. Notice there are **no arrows pointing back "
+        "up** — `crud.py` knows nothing about routes, and `models.py` knows nothing about "
+        "`crud.py`.")
+
+H3("Why one-way arrows matter so much")
+P("A system where A depends on B, and B also depends on A, cannot be understood, tested or changed "
+  "one piece at a time. Every change ripples both ways. This is how projects become the thing "
+  "people call a //big ball of mud//.")
+P("Because our arrows only point downward, you can read `crud.py` on its own and fully understand "
+  "it. You can test it without starting a web server. And you could replace the entire web layer "
+  "with a mobile API tomorrow without touching a single business rule. **That property is worth "
+  "more than any individual feature in this app.**")
+
+H2("3.4 The rules this architecture runs on")
+TBL(["Rule", "Why", "Enforced how?"],
+    [["Authorisation lives in `crud.py`, never in a template.",
+      "Hiding a button is not security. Anyone can send the request by hand.",
+      "By convention + the authorisation tests. **Not by the compiler.**"],
+     ["Routes never trust a `user_id` from the browser.",
+      "This is the IDOR attack. `resolve_target_user()` silently forces a member back to their own id.",
+      "One shared function, used everywhere."],
+     ["Trainer-only routes use the shared `require_trainer_web` dependency.",
+      "A copy-pasted check is a check someone will forget.",
+      "One dependency, attached per route."],
+     ["Schema changes extend, never rewrite.",
+      "The live database holds real data. Adding is safe; altering is not.",
+      "`ensure_schema()` on every startup, idempotent."],
+     ["The same code runs on SQLite and PostgreSQL.",
+      "So local development and production cannot silently diverge.",
+      "SQLAlchemy; no dialect-specific SQL anywhere."]],
+    [42, 56, 52])
+
+Callout("**An honest weakness, found while writing this section.** I measured it rather than "
+        "assumed it: `web.py` makes **73 calls into `crud.py` but also 27 database queries "
+        "directly.** I checked all 27 &mdash; every one is harmless reference data (lists for "
+        "dropdowns, a lookup by id) and **no permission-sensitive query bypasses `crud.py`**. So "
+        "the app is safe today.<br/><br/>"
+        "But the //rule// exists only in my head and in this paragraph. Nothing in the code stops "
+        "the next person adding a permission-sensitive query straight into a route and quietly "
+        "stepping around the entire security layer. **That is exactly the kind of erosion an "
+        "architecture document is supposed to prevent** &mdash; which is a fitting thing to "
+        "discover while writing one.")
+
+NewPage()
+
+H2("3.5 The data model")
+P("Eleven tables. `users` and `exercises` are the two anchors; almost everything else hangs off "
+  "one or both.")
+
+d = Drawing(468, 250)
+_box(d, 20, 112, 96, 30, "users", "trainer / member", fill=colors.HexColor("#fdf6e3"))
+_box(d, 352, 112, 96, 30, "exercises", "the 48-item library", fill=colors.HexColor("#eef3fb"))
+right = [("logs", "every set", 214), ("member_routines", "chosen exercises", 172),
+         ("targets", "overload goals", 130)]
+for name, sub, y in right:
+    _box(d, 176, y, 116, 28, name, sub)
+    _arrow(d, 116, 127, 176, y + 14, col=GOLD)
+    _arrow(d, 352, 127, 292, y + 14, col=ACCENT)
+only_user = [("attendance", "one row per day", 84), ("memberships", "dues + expiry", 46),
+             ("body_weights", "weigh-ins", 8), ("split_days", "weekday → body part", -30)]
+for name, sub, y in only_user[:3]:
+    _box(d, 176, y, 116, 28, name, sub)
+    _arrow(d, 116, 127, 176, y + 14, col=GOLD)
+_box(d, 20, 46, 96, 28, "split_days", "weekday plan")
+_arrow(d, 68, 112, 68, 74, col=GOLD)
+d.add(String(20, 160, "Gold = belongs to one member", fontName="Body", fontSize=6.6, fillColor=GOLD))
+d.add(String(20, 150, "Blue = references an exercise", fontName="Body", fontSize=6.6, fillColor=ACCENT))
+DRAW(d, "`logs`, `member_routines` and `targets` link a **member** to an **exercise**. "
+        "`attendance`, `memberships` and `body_weights` belong to the member alone.")
+
+H3("The one relationship that matters most")
+P("`member_routines` (what you plan to do) and `logs` (what you actually did) are **separate "
+  "tables on purpose**. Delete an exercise from your routine and it stops appearing tomorrow, but "
+  "every session you ever did survives. If those were one table, changing your mind would destroy "
+  "your history. //There is a test whose only job is to keep that true.//")
+
+H2("3.6 The deployment architecture")
+d = Drawing(468, 196)
+_box(d, 8, 146, 124, 34, "Your laptop", "code + SQLite gym.db", fill=colors.HexColor("#f4f6f9"))
+_box(d, 176, 146, 116, 34, "GitHub", "the source of truth", fill=colors.HexColor("#eef3fb"))
+_box(d, 336, 146, 124, 34, "Render: build", "Docker image", fill=colors.HexColor("#eef3fb"))
+_box(d, 336, 80, 124, 34, "Web service", "the running app", fill=colors.HexColor("#eaf5ef"))
+_box(d, 176, 80, 116, 34, "PostgreSQL", "gymlog-db", fill=colors.HexColor("#eaf5ef"))
+_box(d, 8, 10, 124, 34, "Trainer / member", "phone browser", fill=colors.white)
+_arrow(d, 132, 163, 176, 163, label="git push", lx=133)
+_arrow(d, 292, 163, 336, 163, label="auto", lx=300)
+_arrow(d, 398, 146, 398, 114)
+_arrow(d, 336, 97, 292, 97)
+d.add(String(314, 120, "DATABASE_URL", fontName="Body", fontSize=6.6, fillColor=MUTED,
+             textAnchor="middle"))
+# phone -> web service, routed under the database box so nothing overlaps
+d.add(Line(132, 27, 398, 27, strokeColor=OKC, strokeWidth=1.1))
+_arrow(d, 398, 27, 398, 80, col=OKC)
+d.add(String(210, 31, "HTTPS  (public internet)", fontName="Body", fontSize=6.6, fillColor=OKC))
+DRAW(d, "One `git push` is the entire deployment. Render rebuilds the Docker image and swaps it "
+        "in. **Your laptop's SQLite file is never involved** — it cannot be, which is the "
+        "point.")
+
+Callout("**Why this diagram is worth having.** When something goes wrong, this tells you //where "
+        "to look//. Your email-validation bug is the perfect example: the code on GitHub was "
+        "correct, but the phone was hitting a server process that had never restarted. Without "
+        "this picture you debug the code &mdash; which was fine. With it, you ask //\"which box "
+        "is actually running my change?\"// and find it in seconds.")
+
+NewPage()
+
+H1("Why the architecture document is the most important one")
+
+P("You asked why this document matters more than the others. Here is the honest answer, and it is "
+  "worth internalising because it applies to every project you will ever work on.")
+
+H2("1. Code tells you //what//. Only architecture tells you //where//.")
+P("Every fact in this project can be recovered by reading 3,265 lines of Python &mdash; eventually. "
+  "But the questions you actually need answered are locational: //Where do I add a new feature? "
+  "Where is permission decided? What will break if I change this?// Code answers none of those "
+  "quickly. **Architecture is the index to the codebase.**")
+
+H2("2. It is the only way to answer security questions at all")
+P("\"Prove a member cannot read another member's payment history.\" Without an architecture you "
+  "must inspect every route, forever, and you can never be sure you found them all. With one, the "
+  "answer is: //all member data access passes through `crud.py`, here is that file, here are the "
+  "tests//. **You cannot audit a system you cannot map.**")
+P("This is not theoretical for GymLog. It stores names, emails, attendance and payment records. "
+  "The moment a real gym uses it, someone may reasonably ask that question.")
+
+H2("3. It defines the blast radius of a change")
+P("The single most expensive question in software is //\"what else did that break?\"// A dependency "
+  "map answers it directly: change `models.py` and everything below is affected; change a template "
+  "and nothing is. Without the map, every change is a gamble, so people either move slowly or "
+  "break things. **Both are expensive.**")
+
+H2("4. It survives people; memory does not")
+P("Right now the reasoning behind this app lives in two places: this document, and a conversation "
+  "that will eventually be forgotten. In six months //you// will be the new developer on this "
+  "project. Architecture is a letter to that person.")
+Quote("The people who made the decisions leave. The decisions stay. Only the written ones can be "
+      "revisited on purpose &mdash; the rest get discovered by accident, usually at the worst time.")
+
+H2("5. Without it, layers blur &mdash; and that is irreversible")
+P("This is the failure mode to genuinely fear. Nobody destroys an architecture deliberately. It "
+  "goes like this: someone is in a hurry and puts a database query in a template. It works. The "
+  "next person copies the pattern. Two years later every file talks to every other file, nobody "
+  "can change anything safely, and the only remaining options are a rewrite or abandonment.")
+P("**The 27 direct queries I found in `web.py` are exactly this process, at step one.** They are "
+  "harmless today. They are harmless //because I checked//, not because anything prevents them. "
+  "Writing the rule down is the cheapest possible intervention; a rewrite in two years is the "
+  "most expensive.")
+
+H2("6. It is what a buyer, auditor or investor asks for")
+P("If you sell this to a gym chain, license it, or put it in a portfolio, the competent question "
+  "is never \"how many features does it have?\" It is //\"how is it structured, where is the data, "
+  "and who can reach it?\"// Having a real answer separates a product from a demo.")
+
+H2("7. Writing it finds bugs &mdash; demonstrably")
+P("I did not intend to find anything writing this section. Measuring the layering to draw an "
+  "accurate diagram is what surfaced the 73-versus-27 split. **The act of explaining a system "
+  "forces you to look at what is actually there rather than what you remember building.** That is "
+  "the same reason explaining a problem out loud often solves it.")
+
+Callout("**The test of a good architecture document:** hand it to a competent developer who has "
+        "never seen the project. If, after twenty minutes, they can correctly say //\"to add a "
+        "'trainer notes' feature I'd add a table in `models.py`, the rules in `crud.py`, a route "
+        "in `web.py`, and a panel in `dashboard.html` &mdash; and I'd need an authorisation test\"// "
+        "&mdash; then the document works. If they have to read the code first, it does not.")
+
+H2("What to do with this on your next project")
+UL([
+    "**Draw it before you build it**, even roughly. Boxes and arrows on paper. It takes ten "
+    "minutes and it is where you notice that two things you were treating as separate are actually "
+    "the same thing.",
+    "**Write down the rules, not just the boxes.** \"Authorisation lives in X\" is worth more than "
+    "any diagram.",
+    "**Update it when you break a rule** &mdash; deliberately or not. An architecture document "
+    "that describes an app that no longer exists is worse than none, because it is trusted.",
+    "**Ask me for it.** On your next project, //\"draw me the architecture and tell me which rules "
+    "it depends on\"// is one of the highest-value things you can ask, and you should ask it "
+    "//early// &mdash; not, as here, at the end.",
+])
+
+NewPage()
+
+H1("Part 4 &mdash; Every technology, and why")
 
 P("For each one: what it is, why we picked it, what we //could// have picked, and the honest "
   "trade-off we accepted.")
@@ -438,7 +742,7 @@ NewPage()
 # ===================================================================
 # PART 4 - DATABASE
 # ===================================================================
-H1("Part 4 &mdash; The database, explained properly")
+H1("Part 5 &mdash; The database, explained properly")
 
 H2("Why two different database engines?")
 P("This is the question you asked, and it is a good one. We use **SQLite** on your laptop and "
@@ -514,7 +818,7 @@ NewPage()
 # ===================================================================
 # PART 5 - SECURITY
 # ===================================================================
-H1("Part 5 &mdash; Security, and why it came before the money features")
+H1("Part 6 &mdash; Security, and why it came before the money features")
 
 Callout("**The rule we followed:** //Phase 1 adds financial records to the database. Do not add "
         "them to an app with broken authorisation.// Security work is boring and invisible until "
@@ -571,7 +875,7 @@ NewPage()
 # ===================================================================
 # PART 6 - FEATURES
 # ===================================================================
-H1("Part 6 &mdash; Every feature, both perspectives")
+H1("Part 7 &mdash; Every feature, both perspectives")
 
 P("For each feature: what the member sees, what the trainer sees, and &mdash; the part that "
   "matters &mdash; **why it earns its place.**")
@@ -722,7 +1026,7 @@ NewPage()
 # ===================================================================
 # PART 7 - TESTING
 # ===================================================================
-H1("Part 7 &mdash; Testing: what, why, and what it caught")
+H1("Part 8 &mdash; Testing: what, why, and what it caught")
 
 H2("First: what a test actually is")
 P("A test is a small program that uses your app the way a user would, then **asserts** that "
@@ -789,7 +1093,7 @@ NewPage()
 # ===================================================================
 # PART 8 - FAILURES
 # ===================================================================
-H1("Part 8 &mdash; What failed, and what I did about it")
+H1("Part 9 &mdash; What failed, and what I did about it")
 
 P("This is the section you specifically asked for, and the most useful one. **A test that never "
   "fails is not testing anything.** Here is every failure, honestly categorised.")
@@ -868,7 +1172,7 @@ NewPage()
 # ===================================================================
 # PART 9 - WHAT COULD BE BETTER
 # ===================================================================
-H1("Part 9 &mdash; What is weak, honestly")
+H1("Part 10 &mdash; What is weak, honestly")
 
 P("Every project has debt. Naming it is how you stay in control of it. Ordered by how much it "
   "would matter.")
@@ -924,7 +1228,7 @@ NewPage()
 # ===================================================================
 # PART 10 - FOR THE TENDER
 # ===================================================================
-H1("Part 10 &mdash; If this becomes a real product")
+H1("Part 11 &mdash; If this becomes a real product")
 
 P("What changes when it stops being a demo and someone depends on it. In priority order.")
 
@@ -979,7 +1283,7 @@ NewPage()
 # ===================================================================
 # PART 11 - BUSINESS
 # ===================================================================
-H1("Part 11 &mdash; What this is actually worth to a gym trainer")
+H1("Part 12 &mdash; What this is actually worth to a gym trainer")
 
 P("Strip away the technology. Here is the business case, which is what your trainer will care "
   "about.")
@@ -1032,7 +1336,7 @@ NewPage()
 # ===================================================================
 # PART 12 - QUESTIONING
 # ===================================================================
-H1("Part 12 &mdash; Decisions you should have questioned")
+H1("Part 13 &mdash; Decisions you should have questioned")
 
 P("You asked how to work with me better. This is the most direct answer I can give: here are the "
   "points in this project where I made a judgement call and you accepted it without pushing back. "
@@ -1086,7 +1390,7 @@ OL([
 
 NewPage()
 
-H1("Part 13 &mdash; Your checklist for the next project")
+H1("Part 14 &mdash; Your checklist for the next project")
 
 H2("Before any code is written")
 UL([

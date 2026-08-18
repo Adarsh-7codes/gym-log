@@ -272,6 +272,8 @@ def dashboard(
             "cohort": crud.cohort_stats(db, viewed_member) if viewed_member else None,
             # Overload targets: trainer sets them, member sees their own.
             "targets": crud.targets_for(db, viewed_user_id),
+            # Body weight: trend and rate only, never a percentage of a goal.
+            "weight_trend": crud.body_weight_trend(db, viewed_user_id),
         },
     )
 
@@ -745,6 +747,43 @@ def reset_do(
         "<p><a href='/register'>Register now →</a> The first account becomes the trainer.</p>"
         "</div>"
     )
+
+
+# --- Body weight (trainer records at the gym scale) ---------------------
+
+
+@router.post("/members/{user_id}/weight")
+def body_weight_add(
+    user_id: int,
+    weight_kg: str = Form(...),
+    on: str = Form(""),
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    dest = f"/dashboard?user_id={user_id}"
+    try:
+        crud.record_body_weight(
+            db,
+            user_id,
+            on=_opt_date(on) or date.today(),
+            weight_kg=float(weight_kg),
+            recorded_by=Role.trainer,
+        )
+    except (crud.NotFound, ValueError) as exc:
+        msg = str(exc).replace(" ", "+") or "Invalid+values"
+        return RedirectResponse(url=f"{dest}&error={msg}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/weight/{entry_id}/delete")
+def body_weight_delete(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    user_id = crud.delete_body_weight(db, entry_id)
+    dest = f"/dashboard?user_id={user_id}" if user_id else "/dashboard"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Progressive-overload targets (trainer sets; members read only) -----

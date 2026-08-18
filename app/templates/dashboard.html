@@ -193,6 +193,90 @@
 </div>
 {% endif %}
 
+{# ---- Body weight: trend and rate only. Deliberately NO progress bar and
+       NO percentage-of-goal -- body weight is not monotonic. ---- #}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">{% if viewed_member %}Body weight{% else %}Your body weight{% endif %}</strong>
+  {% if weight_trend and weight_trend.enough %}
+  <p style="margin:10px 0 0;font-size:15px">
+    {% if weight_trend.direction == 'steady' %}
+      Steady around {{ '%g'|format(weight_trend.latest.weight_kg) }} kg over {{ '%g'|format(weight_trend.weeks) }} weeks.
+    {% else %}
+      {{ weight_trend.direction|capitalize }} {{ '%g'|format(weight_trend.abs_change) }} kg over {{ '%g'|format(weight_trend.weeks) }} weeks{% if weight_trend.per_week %} — about {{ '%g'|format(weight_trend.per_week) }} kg/week{% endif %}.
+    {% endif %}
+  </p>
+  <p class="muted" style="margin:4px 0 0;font-size:12px">
+    Latest {{ '%g'|format(weight_trend.latest.weight_kg) }} kg on {{ weight_trend.latest.date.strftime('%d %b %Y') }}
+  </p>
+
+  {% set pts = weight_trend.smoothed %}
+  {% if pts|length >= 2 %}
+  {% set vals = pts|map(attribute=1)|list %}
+  {% set vmin = vals|min %}{% set vmax = vals|max %}
+  {% set span = (vmax - vmin) if (vmax - vmin) > 0.01 else 1 %}
+  <svg viewBox="0 0 640 160" width="100%" style="height:auto;display:block;margin-top:12px"
+       xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Body weight trend">
+    <line x1="40" y1="140" x2="628" y2="140" stroke="var(--border)"/>
+    <text x="4" y="24" fill="var(--muted)" font-size="11">{{ '%g'|format(vmax) }}</text>
+    <text x="4" y="144" fill="var(--muted)" font-size="11">{{ '%g'|format(vmin) }}</text>
+    <polyline fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"
+      points="{% for d, v in pts %}{{ 40 + (588 * loop.index0 / ((pts|length - 1) or 1)) }},{{ 140 - (120 * (v - vmin) / span) }} {% endfor %}"/>
+    {% for d, v in pts %}
+    <circle cx="{{ 40 + (588 * loop.index0 / ((pts|length - 1) or 1)) }}" cy="{{ 140 - (120 * (v - vmin) / span) }}" r="3.5" fill="var(--accent)">
+      <title>{{ d.strftime('%d %b %Y') }}: {{ '%g'|format(v) }} kg</title>
+    </circle>
+    {% endfor %}
+  </svg>
+  <p class="muted" style="margin:8px 0 0;font-size:11px">7-day rolling average, so normal day-to-day fluctuation doesn't read as a setback.</p>
+  {% endif %}
+
+  {% elif weight_trend and weight_trend.entries %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">
+    One weigh-in recorded ({{ '%g'|format(weight_trend.entries[0].weight_kg) }} kg on {{ weight_trend.entries[0].date.strftime('%d %b %Y') }}). A trend needs at least two.
+  </p>
+  {% else %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">No weigh-ins recorded yet.</p>
+  {% endif %}
+
+  {% if viewed_member %}
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--accent)">+ Record weigh-in</summary>
+    <form method="post" action="/members/{{ viewed_member.id }}/weight" style="margin-top:12px">
+      <div class="row">
+        <div class="field inline" style="max-width:160px">
+          <label for="w_kg">Weight (kg)</label>
+          <input id="w_kg" type="number" name="weight_kg" step="0.1" min="0" required>
+        </div>
+        <div class="field inline" style="max-width:170px">
+          <label for="w_on">Date</label>
+          <input id="w_on" type="date" name="on" value="{{ today.isoformat() }}">
+        </div>
+        <div class="field inline" style="flex:0 0 auto"><button type="submit">Save</button></div>
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:12px">Weekly is plenty — most members don't own a scale.</p>
+    </form>
+    {% if weight_trend and weight_trend.entries %}
+    <table style="font-size:13px;margin-top:12px">
+      <thead><tr><th>Date</th><th>Weight</th><th></th></tr></thead>
+      <tbody>
+        {% for e in weight_trend.entries|reverse %}
+        <tr>
+          <td data-label="Date">{{ e.date.strftime('%d %b %Y') }}</td>
+          <td data-label="Weight">{{ '%g'|format(e.weight_kg) }} kg</td>
+          <td class="actions" style="text-align:right">
+            <form method="post" action="/weight/{{ e.id }}/delete" style="margin:0">
+              <button type="submit" class="btn danger" style="padding:4px 9px;font-size:12px">✕</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </details>
+  {% endif %}
+</div>
+
 {# ---- Overload targets: trainer sets them; the member sees their own ---- #}
 <div class="panel" style="margin-bottom:20px">
   <strong style="font-size:14px">{% if viewed_member %}Targets{% else %}Your targets{% endif %}</strong>

@@ -102,6 +102,25 @@ class Membership(Base):
     user = relationship("User", back_populates="memberships")
 
 
+class BodyWeight(Base):
+    """A weigh-in. Expect weekly cadence, usually the trainer at the gym scale.
+
+    Shown only as trend and rate. Never as a progress bar or percentage of a
+    goal: body weight is not monotonic, and a bar moving backwards punishes a
+    member who did everything right.
+    """
+
+    __tablename__ = "body_weights"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_bodyweight_user_date"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    weight_kg = Column(Float, nullable=False)
+    recorded_by = Column(SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.trainer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Target(Base):
     """A progressive-overload goal the trainer sets for one member's lift.
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Attendance,
     BodyPart,
+    BodyWeight,
     Difficulty,
     Exercise,
     Log,
@@ -388,6 +389,114 @@ def last_attendance(db: Session, user_id: int) -> Optional[date]:
     return db.scalar(
         select(func.max(Attendance.date)).where(Attendance.user_id == user_id)
     )
+
+
+# --- Body weight (trend and rate only) ----------------------------------
+#
+# Forbidden here by design, do not add later without re-reading the brief:
+#   * No progress bar or "X% of goal complete" -- body weight is not
+#     monotonic, and a bar going backwards punishes a member who did nothing
+#     wrong.
+#   * No hard-coded target rate (e.g. "10 kg in 2 months" is ~1.25 kg/week,
+#     well above what is normally considered sustainable). The UI encodes no
+#     rate at all.
+#   * No attribution of a result to diet, junk food, effort or discipline.
+#     The app cannot observe those and must not claim to.
+
+ROLLING_WINDOW_DAYS = 7   # smoothing window, so water-weight noise is not "failure"
+
+
+def record_body_weight(
+    db: Session, user_id: int, *, on: date, weight_kg: float, recorded_by: Role
+) -> BodyWeight:
+    """Add or update a weigh-in. One reading per member per day."""
+    if not db.get(User, user_id):
+        raise NotFound("Member not found")
+    if weight_kg <= 0:
+        raise ValueError("Weight must be greater than zero")
+    existing = db.scalar(
+        select(BodyWeight).where(BodyWeight.user_id == user_id, BodyWeight.date == on)
+    )
+    if existing is not None:
+        existing.weight_kg = weight_kg
+        existing.recorded_by = recorded_by
+        db.commit()
+        db.refresh(existing)
+        return existing
+    entry = BodyWeight(user_id=user_id, date=on, weight_kg=weight_kg, recorded_by=recorded_by)
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def delete_body_weight(db: Session, entry_id: int) -> Optional[int]:
+    entry = db.get(BodyWeight, entry_id)
+    if entry is None:
+        return None
+    user_id = entry.user_id
+    db.delete(entry)
+    db.commit()
+    return user_id
+
+
+def body_weights(db: Session, user_id: int) -> list:
+    """All weigh-ins, oldest first."""
+    return list(
+        db.scalars(
+            select(BodyWeight).where(BodyWeight.user_id == user_id).order_by(BodyWeight.date)
+        ).all()
+    )
+
+
+def _rolling_average(entries: list) -> list:
+    """(date, smoothed_kg) using a trailing ROLLING_WINDOW_DAYS mean.
+
+    Only meaningful when entries are dense; with the expected weekly cadence
+    each window usually holds one reading and this is a no-op.
+    """
+    out = []
+    for i, entry in enumerate(entries):
+        window_start = entry.date - timedelta(days=ROLLING_WINDOW_DAYS - 1)
+        window = [e.weight_kg for e in entries[: i + 1] if e.date >= window_start]
+        out.append((entry.date, sum(window) / len(window)))
+    return out
+
+
+def body_weight_trend(db: Session, user_id: int) -> Optional[dict]:
+    """Direction and rate of change. None when there is not enough to say.
+
+    Returns a factual summary only -- never a percentage of any goal.
+    """
+    entries = body_weights(db, user_id)
+    if len(entries) < 2:
+        return {"entries": entries, "enough": False} if entries else None
+
+    first, last = entries[0], entries[-1]
+    change = round(last.weight_kg - first.weight_kg, 1)
+    days = max(1, (last.date - first.date).days)
+    weeks = days / 7
+    per_week = round(change / weeks, 2) if weeks >= 1 else None
+
+    if change < -0.1:
+        direction = "down"
+    elif change > 0.1:
+        direction = "up"
+    else:
+        direction = "steady"
+
+    return {
+        "entries": entries,
+        "enough": True,
+        "latest": last,
+        "first": first,
+        "change": change,
+        "abs_change": abs(change),
+        "direction": direction,
+        "weeks": round(weeks, 1),
+        "per_week": abs(per_week) if per_week is not None else None,
+        "smoothed": _rolling_average(entries),
+    }
 
 
 # --- Progressive-overload targets ---------------------------------------

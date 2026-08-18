@@ -13,7 +13,7 @@ A full-stack gym tracking web app for **one trainer and their members**. Built w
 - **Live URL:** https://gymlog-jtd8.onrender.com
 - **Host:** Render (free tier). Web service `gymlog` + Postgres database `gymlog-db`.
 - **Deploy method:** Render Blueprint from `render.yaml`. Auto-deploys on every `git push` to `main`.
-- **Repo:** https://github.com/Adarsh-yaarrrr/gym-log
+- **Repo:** https://github.com/Adarsh-7codes/gym-log
 - Free tier sleeps after ~15 min idle → first load takes ~30–60s (cold start). Open the URL a couple minutes before showing it live.
 
 ## 3. Tech stack

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -39,6 +40,11 @@ class BodyPart(str, enum.Enum):
     core = "core"
 
 
+class MembershipStatus(str, enum.Enum):
+    paid = "paid"
+    pending = "pending"
+
+
 class Difficulty(str, enum.Enum):
     beginner = "beginner"
     intermediate = "intermediate"
@@ -58,6 +64,42 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     logs = relationship("Log", back_populates="user", cascade="all, delete-orphan")
+    memberships = relationship(
+        "Membership", back_populates="user", cascade="all, delete-orphan", order_by="Membership.plan_start.desc()"
+    )
+
+
+class Membership(Base):
+    """One membership term for a member (plan start + duration + dues).
+
+    A member accumulates several rows over time -- that history is the renewal
+    record. The "current" membership is the row with the latest plan_start.
+    `expires_on` is computed once on save and stored, so roster queries and
+    sorting never have to derive it at read time.
+
+    Deliberately NOT here: card details, gateway ids, invoices. The trainer
+    collects cash/UPI himself and only records the outcome.
+    """
+
+    __tablename__ = "memberships"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_start = Column(Date, nullable=False)
+    duration_months = Column(Integer, nullable=False)
+    expires_on = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False, default=0)
+    status = Column(
+        SAEnum(MembershipStatus, native_enum=False, length=20),
+        nullable=False,
+        default=MembershipStatus.pending,
+        index=True,
+    )
+    paid_on = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="memberships")
 
 
 class Exercise(Base):

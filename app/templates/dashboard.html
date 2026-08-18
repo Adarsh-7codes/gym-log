@@ -5,30 +5,57 @@
 
 {% if show_roster %}
 {# ---------------- Trainer scan view: one row per member ---------------- #}
-{% set flagged_count = roster | selectattr('flagged') | list | length %}
 <div class="toolbar">
   <div>
     <h1>Members</h1>
-    <p class="subtitle" style="margin:0">
-      {% if flagged_count %}<strong style="color:var(--danger)">{{ flagged_count }} need attention</strong> — listed first.
-      {% else %}Everyone's on track.{% endif %}
-    </p>
+    <p class="subtitle" style="margin:0">Who owes money, whose plan is ending, who needs a nudge.</p>
   </div>
   <a class="btn ghost" href="/members">Manage accounts</a>
+</div>
+
+{# Summary strip: the trainer's daily numbers #}
+<div class="statstrip">
+  <div class="stat"><span class="statnum">{{ summary.active }}</span><span class="statlabel">Active</span></div>
+  <div class="stat {% if summary.expiring_soon %}warn{% endif %}">
+    <span class="statnum">{{ summary.expiring_soon }}</span><span class="statlabel">Expiring ≤{{ 7 }}d</span>
+  </div>
+  <div class="stat {% if summary.expired %}bad{% endif %}">
+    <span class="statnum">{{ summary.expired }}</span><span class="statlabel">Expired</span>
+  </div>
+  <div class="stat {% if summary.pending_dues > 0 %}bad{% endif %}">
+    <span class="statnum">₹{{ '{:,.0f}'.format(summary.pending_dues) }}</span><span class="statlabel">Pending dues</span>
+  </div>
+</div>
+
+<div class="sortbar">
+  <span class="muted" style="font-size:12px">Sort:</span>
+  {% for key, label in [('default','Needs attention'),('expiry','Expiry'),('dues','Dues'),('activity','Last session'),('name','Name')] %}
+  <a href="/dashboard?sort={{ key }}" class="sortopt {% if sort == key %}sel{% endif %}">{{ label }}</a>
+  {% endfor %}
 </div>
 
 <div class="panel" style="padding:0;overflow:hidden">
   {% if roster %}
   <table>
     <thead>
-      <tr><th>Member</th><th>Last session</th><th>Status</th><th></th></tr>
+      <tr><th>Member</th><th>Expires</th><th>Dues</th><th>Last session</th><th>Status</th><th></th></tr>
     </thead>
     <tbody>
       {% for s in roster %}
       <tr class="clickrow" onclick="location.href='/dashboard?user_id={{ s.user.id }}'">
         <td data-label="Member"><strong>{{ s.user.name }}</strong></td>
+        <td data-label="Expires">
+          {% if not s.membership %}<span class="muted">no plan</span>
+          {% elif s.expired %}<span class="flag flag-red">expired {{ -s.days_to_expiry }}d ago</span>
+          {% elif s.expiring_soon %}<span class="flag flag-amber">in {{ s.days_to_expiry }}d</span>
+          {% else %}in {{ s.days_to_expiry }}d <span class="muted">({{ s.expires_on.strftime('%d %b %Y') }})</span>{% endif %}
+        </td>
+        <td data-label="Dues">
+          {% if s.has_dues %}<span class="flag flag-red">₹{{ '{:,.0f}'.format(s.dues) }}</span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
         <td data-label="Last session">
-          {% if s.last_date %}{{ s.last_date.isoformat() }} <span class="muted">({{ s.days_since }}d ago)</span>
+          {% if s.last_date %}{{ s.last_date.strftime('%d %b') }} <span class="muted">({{ s.days_since }}d)</span>
           {% else %}<span class="muted">never</span>{% endif %}
         </td>
         <td data-label="Status">
@@ -58,6 +85,32 @@
   <span class="badge {{ current_user.role.value }}">{{ current_user.role.value }}</span>
   <span><strong>Member view</strong> — you see and manage only your own logs and planner.</span>
 </div>
+
+{# Member's own membership: read-only, factual, no dues-chasing language. #}
+{% if membership %}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">Your membership</strong>
+  <p style="margin:8px 0 0">Valid till <strong>{{ membership.expires_on.strftime('%d %b %Y') }}</strong></p>
+  {% if membership_history %}
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--accent)">Payment history</summary>
+    <table style="font-size:13px;margin-top:10px">
+      <thead><tr><th>Start</th><th>Months</th><th>Valid till</th><th>Amount</th></tr></thead>
+      <tbody>
+        {% for m in membership_history %}
+        <tr>
+          <td data-label="Start">{{ m.plan_start.strftime('%d %b %Y') }}</td>
+          <td data-label="Months">{{ m.duration_months }}</td>
+          <td data-label="Valid till">{{ m.expires_on.strftime('%d %b %Y') }}</td>
+          <td data-label="Amount">₹{{ '{:,.0f}'.format(m.amount) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
 {% endif %}
 
 <div class="toolbar">
@@ -71,6 +124,96 @@
 </div>
 
 {% if viewed_member %}
+{# ---- Trainer: membership, dues and renewal history for this member ---- #}
+{% set days_left = (membership.expires_on - today).days if membership else None %}
+<div class="panel" style="margin-bottom:20px">
+  <strong style="font-size:14px">Membership</strong>
+  {% if membership %}
+  <div class="row" style="gap:22px;margin-top:10px;align-items:flex-start">
+    <div><div class="muted" style="font-size:12px">Current plan</div>
+      <div>{{ membership.duration_months }} month{{ '' if membership.duration_months == 1 else 's' }}
+        <span class="muted">from {{ membership.plan_start.strftime('%d %b %Y') }}</span></div></div>
+    <div><div class="muted" style="font-size:12px">Expires</div>
+      <div>{{ membership.expires_on.strftime('%d %b %Y') }}
+        {% if days_left < 0 %}<span class="flag flag-red">expired {{ -days_left }}d ago</span>
+        {% elif days_left <= expiry_soon_days %}<span class="flag flag-amber">in {{ days_left }}d</span>
+        {% else %}<span class="muted">in {{ days_left }}d</span>{% endif %}</div></div>
+    <div><div class="muted" style="font-size:12px">Payment</div>
+      <div>₹{{ '{:,.0f}'.format(membership.amount) }}
+        {% if membership.status.value == 'paid' %}<span class="flag flag-ok">paid</span>
+        {% else %}<span class="flag flag-red">pending</span>{% endif %}</div></div>
+  </div>
+  {% else %}
+  <p class="muted" style="margin:8px 0 0;font-size:13px">No membership recorded yet.</p>
+  {% endif %}
+
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--accent)">+ Add renewal</summary>
+    <form method="post" action="/members/{{ viewed_member.id }}/membership" style="margin-top:12px">
+      <div class="row">
+        <div class="field inline" style="max-width:170px">
+          <label for="plan_start">Start date</label>
+          <input id="plan_start" type="date" name="plan_start" value="{{ today.isoformat() }}" required>
+        </div>
+        <div class="field inline" style="max-width:130px">
+          <label for="duration_months">Months</label>
+          <input id="duration_months" type="number" name="duration_months" value="3" min="1" required>
+        </div>
+        <div class="field inline" style="max-width:150px">
+          <label for="amount">Amount (₹)</label>
+          <input id="amount" type="number" name="amount" step="0.01" min="0" placeholder="0">
+        </div>
+        <div class="field inline" style="max-width:150px">
+          <label for="status">Payment</label>
+          <select id="status" name="status">
+            <option value="pending">Pending</option>
+            <option value="paid">Paid</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label for="notes">Notes <span class="muted">(optional)</span></label>
+        <input id="notes" type="text" name="notes" placeholder="e.g. cash, renewed at desk">
+      </div>
+      <button type="submit">Save membership</button>
+    </form>
+  </details>
+
+  {% if membership_history %}
+  <div style="margin-top:16px">
+    <div class="muted" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Renewal history</div>
+    <table style="font-size:13px">
+      <thead><tr><th>Start</th><th>Months</th><th>Expires</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for m in membership_history %}
+        <tr>
+          <td data-label="Start">{{ m.plan_start.strftime('%d %b %Y') }}</td>
+          <td data-label="Months">{{ m.duration_months }}</td>
+          <td data-label="Expires">{{ m.expires_on.strftime('%d %b %Y') }}</td>
+          <td data-label="Amount">₹{{ '{:,.0f}'.format(m.amount) }}</td>
+          <td data-label="Status">
+            {% if m.status.value == 'paid' %}<span class="flag flag-ok">paid{% if m.paid_on %} {{ m.paid_on.strftime('%d %b') }}{% endif %}</span>
+            {% else %}<span class="flag flag-red">pending</span>{% endif %}
+          </td>
+          <td class="actions" style="text-align:right;white-space:nowrap">
+            {% if m.status.value != 'paid' %}
+            <form method="post" action="/membership/{{ m.id }}/paid" style="display:inline;margin:0">
+              <button type="submit" class="btn ghost" style="padding:5px 10px;font-size:12px">Mark paid</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/membership/{{ m.id }}/delete" style="display:inline;margin:0"
+                  onsubmit="return confirm('Delete this membership record?')">
+              <button type="submit" class="btn danger" style="padding:5px 10px;font-size:12px">✕</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
 <div class="panel" style="margin-bottom:20px">
   <strong style="font-size:14px">Routine</strong>
   {% if routine %}

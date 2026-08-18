@@ -48,6 +48,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `MemberRoutine(user_id, exercise_id, body_part, date_added)` — a member's standing list of exercises per body part. Removing a row does **not** delete logs.
 - `SplitDay(user_id, weekday 0–6, body_part)` — the **Weekly Split**: multiple rows per weekday allowed (e.g. Mon = chest AND arms).
 - `Log(user_id, exercise_id, date, weight, reps, sets, next_action, notes, feeling[easy/moderate/tough], logged_by[member|trainer])` — historical performance. `logged_by` = who entered it.
+- `Membership(user_id, plan_start, duration_months, expires_on, amount[Numeric(10,2)], status[paid|pending], paid_on, notes, created_at)` — **Phase 1**. One row per membership term; several rows per member = renewal history. "Current" = latest `plan_start`. `expires_on` is computed on save via `crud.add_months()` and **stored**, never derived at read time. No card/gateway/invoice data by design — the trainer collects cash/UPI and records the outcome.
 - `PlanDay` / `PlanItem` — older weekly planner (per-day focus + target sets/reps). Now **trainer-only** in nav; superseded for members by SplitDay + MemberRoutine.
 
 ## 8. Features
@@ -55,8 +56,9 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - **Weekly Split** (member): assign body part(s) to each weekday. Recurring; editable anytime.
 - **Fast day-based logging** (member, `/logs/new`): defaults to **today's** body parts with a **day-picker** (option B) to switch days; shows only that day's routine exercises. Numeric steppers for weight/reps/sets, `inputmode` numeric keypads, and **auto-carry of last session's weight**. One-tap save; stays on the same day. Falls back to the whole routine if no split is set.
 - **Trainer log form** (`/logs/new` as trainer): full form with ALL exercises + member picker (logs on behalf → `logged_by=trainer`).
-- **Trainer dashboard** (`/dashboard`): roster — one row per member with last session + **stall/inactivity flags**, sorted flagged-first, clickable into each member's logs (with their routine shown).
-- **Stall detection** (`app/crud.py`): per exercise, compares the last **3** sessions' top `(weight, reps)`; no new PR → stalled. Member flagged if any exercise stalled OR no session in **10** days. Constants: `SESSIONS_TO_COMPARE=3`, `INACTIVE_DAYS=10`.
+- **Trainer dashboard** (`/dashboard`): roster — one row per member with **expiry**, **dues**, last session and **stall/inactivity flags**; clickable into each member's logs (routine + membership shown). Summary strip: active / expiring ≤7d / expired / total pending dues (₹). Sortable via `?sort=` — `default` (overdue dues → expiring soon → flagged → rest), `expiry`, `dues`, `activity`, `name`.
+- **Membership & dues** (**Phase 1**, trainer-only writes): on a member's page — current plan, expiry, payment status, full renewal history, "Add renewal" form and one-click **Mark paid**. Members see their own *"Valid till …"* + payment history **read-only**, with no dues-chasing language and no access to anyone else's. Currency is ₹ (display only).
+- **Stall detection** (`app/crud.py`): per exercise, compares the last **3** sessions' top `(weight, reps)`; no new PR → stalled. Member flagged if any exercise stalled OR no session in **10** days. Constants: `SESSIONS_TO_COMPARE=3`, `INACTIVE_DAYS=10`, `EXPIRY_SOON_DAYS=7`.
 - **Progress** (`/progress`): dependency-free inline-SVG charts — weight-over-time per exercise, weekly volume bars, feeling breakdown.
 - JSON API under `/api/*` mirrors auth/exercises/logs/users; interactive docs at `/docs`.
 
@@ -65,6 +67,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/dashboard` — trainer roster or member/one-member log view.
 - `/library`, `/split`, `/logs/new`, `/logs/{id}/edit|delete`, `/progress`.
 - `/members` (trainer): list + create member accounts.
+- `/members/{user_id}/membership` POST (trainer): record a membership term.
+- `/membership/{id}/paid` POST, `/membership/{id}/delete` POST (trainer).
 - `/exercises` (trainer): manage the raw exercise list.
 - `/danger/reset` — demo reset, **local only** (see §10).
 - `/register` — 403 once a trainer exists (renders `registration_closed.html`).
@@ -92,7 +96,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `e2cdb54` weekly split: day-based exercise filtering
 - `1b0ee77` token-guarded demo reset endpoint
 - `d4f3aaa` add this project-memory doc
-- _(Phase 0)_ security hardening: local-only reset, shared `require_trainer_web`, closed self-registration, `docs/authz-check.md`
+- `987a79c` _(Phase 0)_ security hardening: local-only reset, shared `require_trainer_web`, closed self-registration, `docs/authz-check.md`
+- _(Phase 1)_ membership & dues: `Membership` table, roster expiry/dues columns + summary strip + sorting, trainer renewal/mark-paid, member read-only view
 
 ## 12b. Positioning (trainer-first)
 The app is sold to the **trainer/gym owner**, not to members. The trainer is the only guaranteed daily user; members attend ~1.5–2×/week and few will type into an app. Features are judged on: *does it make the trainer's day easier, or help him sell/retain memberships?* Member screens are kept only where they need **near-zero data entry** — all existing member features (Library, Weekly Split, fast day-based logging, progress) are retained. Roadmap: `docs/gymlog-trainer-first-prompt.md` (Phases 1–6: memberships & dues, trainer-edits-routines, attendance, talking points, overload targets, body weight).

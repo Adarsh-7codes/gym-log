@@ -1,10 +1,25 @@
+import calendar
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import BodyPart, Difficulty, Exercise, Log, MemberRoutine, PlanDay, PlanItem, Role, SplitDay, User
+from app.models import (
+    BodyPart,
+    Difficulty,
+    Exercise,
+    Log,
+    Membership,
+    MembershipStatus,
+    MemberRoutine,
+    PlanDay,
+    PlanItem,
+    Role,
+    SplitDay,
+    User,
+)
 
 
 class Forbidden(Exception):
@@ -178,6 +193,110 @@ def delete_plan_item(db: Session, current_user: User, item_id: int, target_user_
         db.commit()
 
 
+# --- Membership & dues --------------------------------------------------
+
+EXPIRY_SOON_DAYS = 7   # membership expiring within this many days -> amber
+
+
+def add_months(d: date, months: int) -> date:
+    """Add whole months to a date, clamping to the end of the target month.
+
+    Hand-rolled on purpose: dateutil is not a declared dependency, and this
+    is the only date arithmetic the app needs. 31 Jan + 1 month -> 28/29 Feb.
+    """
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(d.day, last_day))
+
+
+def create_membership(
+    db: Session,
+    user_id: int,
+    *,
+    plan_start: date,
+    duration_months: int,
+    amount: Decimal,
+    status: MembershipStatus,
+    paid_on: Optional[date] = None,
+    notes: Optional[str] = None,
+) -> Membership:
+    """Record a membership term. expires_on is computed once and stored."""
+    if not db.get(User, user_id):
+        raise NotFound("Member not found")
+    if duration_months < 1:
+        raise ValueError("Duration must be at least 1 month")
+    membership = Membership(
+        user_id=user_id,
+        plan_start=plan_start,
+        duration_months=duration_months,
+        expires_on=add_months(plan_start, duration_months),
+        amount=amount,
+        status=status,
+        # Marking it paid at creation time defaults the payment date to the start.
+        paid_on=(paid_on or plan_start) if status == MembershipStatus.paid else None,
+        notes=notes,
+    )
+    db.add(membership)
+    db.commit()
+    db.refresh(membership)
+    return membership
+
+
+def mark_membership_paid(db: Session, membership_id: int, on: Optional[date] = None) -> Optional[Membership]:
+    membership = db.get(Membership, membership_id)
+    if membership is None:
+        return None
+    membership.status = MembershipStatus.paid
+    membership.paid_on = on or date.today()
+    db.commit()
+    db.refresh(membership)
+    return membership
+
+
+def delete_membership(db: Session, membership_id: int) -> Optional[int]:
+    """Remove a wrongly-entered term. Returns the owner's user_id."""
+    membership = db.get(Membership, membership_id)
+    if membership is None:
+        return None
+    user_id = membership.user_id
+    db.delete(membership)
+    db.commit()
+    return user_id
+
+
+def current_membership(db: Session, user_id: int) -> Optional[Membership]:
+    """The term with the latest plan_start -- what the member is on now."""
+    return db.scalar(
+        select(Membership)
+        .where(Membership.user_id == user_id)
+        .order_by(Membership.plan_start.desc(), Membership.id.desc())
+        .limit(1)
+    )
+
+
+def membership_history(db: Session, user_id: int) -> list:
+    """Every term for a member, newest first (the renewal record)."""
+    return list(
+        db.scalars(
+            select(Membership)
+            .where(Membership.user_id == user_id)
+            .order_by(Membership.plan_start.desc(), Membership.id.desc())
+        ).all()
+    )
+
+
+def pending_dues_for(db: Session, user_id: int) -> Decimal:
+    """Total unpaid amount across all of this member's terms."""
+    total = db.scalar(
+        select(func.coalesce(func.sum(Membership.amount), 0)).where(
+            Membership.user_id == user_id, Membership.status == MembershipStatus.pending
+        )
+    )
+    return Decimal(str(total or 0))
+
+
 # --- Progress / stall detection ----------------------------------------
 
 SESSIONS_TO_COMPARE = 3   # look at the last N logged sessions per exercise
@@ -234,6 +353,11 @@ def member_status(db: Session, user: User) -> dict:
     if stalled:
         reasons.append("Stalled: " + ", ".join(e.name for e in stalled))
 
+    membership = current_membership(db, user.id)
+    expires_on = membership.expires_on if membership else None
+    days_to_expiry = (expires_on - date.today()).days if expires_on else None
+    dues = pending_dues_for(db, user.id)
+
     return {
         "user": user,
         "last_date": last_date,
@@ -242,21 +366,64 @@ def member_status(db: Session, user: User) -> dict:
         "stalled": stalled,
         "flagged": bool(reasons),
         "reasons": reasons,
+        # --- membership / dues (Phase 1) ---
+        "membership": membership,
+        "expires_on": expires_on,
+        "days_to_expiry": days_to_expiry,
+        "expired": days_to_expiry is not None and days_to_expiry < 0,
+        "expiring_soon": days_to_expiry is not None and 0 <= days_to_expiry <= EXPIRY_SOON_DAYS,
+        "dues": dues,
+        "has_dues": dues > 0,
     }
 
 
-def member_roster(db: Session) -> list:
-    """All members with status, flagged (stalled/inactive) surfaced first."""
+# Roster sort keys. Default surfaces money and expiry before training flags,
+# because that is the trainer's daily question.
+def _roster_sort_key(s: dict, sort: str):
+    name = s["user"].name.lower()
+    # None expiry sorts last within its group.
+    exp = s["days_to_expiry"] if s["days_to_expiry"] is not None else 10**6
+    if sort == "name":
+        return (name,)
+    if sort == "expiry":
+        return (exp, name)
+    if sort == "dues":
+        return (-float(s["dues"]), name)
+    if sort == "activity":
+        return (-(s["days_since"] if s["days_since"] is not None else 10**6), name)
+    # default: overdue dues -> expiring soon -> stall/inactivity -> everyone else
+    return (
+        not s["has_dues"],
+        not (s["expired"] or s["expiring_soon"]),
+        not s["flagged"],
+        exp,
+        name,
+    )
+
+
+ROSTER_SORTS = ("default", "name", "expiry", "dues", "activity")
+
+
+def member_roster(db: Session, sort: str = "default") -> list:
+    """All members with status; dues/expiry/flags surfaced first by default."""
+    if sort not in ROSTER_SORTS:
+        sort = "default"
     members = db.scalars(select(User).where(User.role == Role.member).order_by(User.name)).all()
     statuses = [member_status(db, m) for m in members]
-    statuses.sort(
-        key=lambda s: (
-            not s["flagged"],                                              # flagged first
-            -(s["days_since"] if s["days_since"] is not None else 10**6),  # stalest first
-            s["user"].name.lower(),
-        )
-    )
+    statuses.sort(key=lambda s: _roster_sort_key(s, sort))
     return statuses
+
+
+def roster_summary(rows: list) -> dict:
+    """Headline numbers for the top of the roster."""
+    return {
+        "total": len(rows),
+        "active": sum(1 for r in rows if r["days_to_expiry"] is not None and r["days_to_expiry"] >= 0),
+        "expiring_soon": sum(1 for r in rows if r["expiring_soon"]),
+        "expired": sum(1 for r in rows if r["expired"]),
+        "no_membership": sum(1 for r in rows if r["membership"] is None),
+        "pending_dues": sum((r["dues"] for r in rows), Decimal("0")),
+    }
 
 
 def stalled_exercise_ids(db: Session, user_id: int) -> set:

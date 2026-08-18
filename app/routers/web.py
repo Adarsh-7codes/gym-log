@@ -6,6 +6,7 @@ cookie is missing/invalid -- main.py maps that to a redirect to /login.
 """
 import os
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +21,7 @@ from app import crud
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user_web, get_current_user_web_optional, require_trainer_web
-from app.models import BodyPart, Difficulty, Exercise, Log, Role, User
+from app.models import BodyPart, Difficulty, Exercise, Log, MembershipStatus, Role, User
 from app.security import create_access_token, hash_password, verify_password
 
 router = APIRouter(tags=["web"], include_in_schema=False)
@@ -188,6 +189,7 @@ def dashboard(
     exercise_id: Optional[int] = None,
     start_date: str = "",
     end_date: str = "",
+    sort: str = "default",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_web),
 ):
@@ -196,6 +198,7 @@ def dashboard(
     # Trainer landing = member roster (quick scan). Drilling into a member
     # (?user_id=) switches to that member's full log view.
     if is_trainer and user_id is None:
+        roster = crud.member_roster(db, sort=sort)
         return templates.TemplateResponse(
             "dashboard.html",
             {
@@ -203,7 +206,9 @@ def dashboard(
                 "current_user": current_user,
                 "is_trainer": True,
                 "show_roster": True,
-                "roster": crud.member_roster(db),
+                "roster": roster,
+                "summary": crud.roster_summary(roster),
+                "sort": sort if sort in crud.ROSTER_SORTS else "default",
             },
         )
 
@@ -241,6 +246,12 @@ def dashboard(
             "selected_exercise_id": exercise_id,
             "start_date": start_date,
             "end_date": end_date,
+            # Membership: trainer sees full history + actions for the member
+            # they opened; a member sees only their own, read-only.
+            "membership": crud.current_membership(db, viewed_user_id),
+            "membership_history": crud.membership_history(db, viewed_user_id),
+            "today": date.today(),
+            "expiry_soon_days": crud.EXPIRY_SOON_DAYS,
         },
     )
 
@@ -682,6 +693,65 @@ def reset_do(
         "<p><a href='/register'>Register now →</a> The first account becomes the trainer.</p>"
         "</div>"
     )
+
+
+# --- Membership & dues (trainer only) -----------------------------------
+
+
+@router.post("/members/{user_id}/membership")
+def membership_add(
+    user_id: int,
+    plan_start: str = Form(...),
+    duration_months: str = Form(...),
+    amount: str = Form(""),
+    # aliased so the form field can be "status" without shadowing fastapi.status
+    pay_status: str = Form("pending", alias="status"),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    dest = f"/dashboard?user_id={user_id}"
+    target = db.get(User, user_id)
+    if target is None or target.role != Role.member:
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        crud.create_membership(
+            db,
+            user_id,
+            plan_start=date.fromisoformat(plan_start),
+            duration_months=int(duration_months),
+            amount=Decimal(amount.strip() or "0"),
+            status=(
+                MembershipStatus.paid if pay_status == "paid" else MembershipStatus.pending
+            ),
+            notes=notes.strip() or None,
+        )
+    except (crud.NotFound, ValueError, InvalidOperation) as exc:
+        msg = str(exc).replace(" ", "+") or "Invalid+values"
+        return RedirectResponse(url=f"{dest}&error={msg}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/membership/{membership_id}/paid")
+def membership_mark_paid(
+    membership_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    membership = crud.mark_membership_paid(db, membership_id)
+    dest = f"/dashboard?user_id={membership.user_id}" if membership else "/dashboard"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/membership/{membership_id}/delete")
+def membership_delete(
+    membership_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    user_id = crud.delete_membership(db, membership_id)
+    dest = f"/dashboard?user_id={user_id}" if user_id else "/dashboard"
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Members (trainer only) ---------------------------------------------

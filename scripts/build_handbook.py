@@ -1010,7 +1010,46 @@ Callout("**What this feature deliberately does NOT have, and why this is the mos
         "These prohibitions are **asserted in the test suite**, so they cannot quietly creep back "
         "in later.")
 
-H2("10. Role separation, made visible")
+H2("10. Account recovery (Phase 0.5)")
+P("Added after a real incident: the trainer password was lost and there was **no way back in "
+  "except editing the database by hand.** The trainer account is created by being the first "
+  "registration ever, and there is no self-service way to make a second one &mdash; so a lost "
+  "trainer password locked the gym out of its own data permanently.")
+UL([
+    "**Trainer:** a **Reset password** control on each member in the Members list. Types the new "
+    "password, confirms with the member's name shown so a mis-tap cannot reset the wrong person.",
+    "**Member:** `/account/password` to change their own, which requires the current password &mdash; "
+    "so it is convenience, not recovery. Forgot it entirely? The trainer is standing right there.",
+    "**Trainer lockout:** `scripts/set_password.py`, run locally or from the Render shell. The "
+    "deliberate last resort.",
+    "**Both roles:** an `/account` page for recovery contact details, unused by any automated flow "
+    "today but stored so an emailed reset could be added later without another migration.",
+])
+P("**Why no email or SMS reset:** it would mean a paid external provider, deliverability problems, "
+  "and DLT registration for Indian SMS &mdash; real cost and complexity. It is also the wrong "
+  "shape for the problem: in a value gym the trainer is physically next to the member. **Solve it "
+  "in person.**")
+Callout("**The commercial argument, which is the real point of this phase.** The trainer sets "
+        "member passwords himself. With 150 members, lockouts happen weekly. If every one needs "
+        "the developer to run a database query, **the developer becomes permanent unpaid support "
+        "and the product cannot scale past one gym.** The success criterion was not \"add a reset "
+        "button\" &mdash; it was //the trainer never needs to contact the developer to resolve a "
+        "lockout//. Notice how much clearer that is to build against.")
+
+H3("The detail that is easy to get wrong: killing live sessions")
+P("Our login tokens are **stateless JWTs valid for 7 days**. Nothing on the server tracks them. So "
+  "if a password is reset //because it leaked//, the thief's existing token keeps working for up "
+  "to a week &mdash; the reset achieves nothing.")
+P("The fix is a `token_version` counter on the account. It is written into every token issued, "
+  "checked on every request, and incremented on every password change. Old tokens instantly stop "
+  "matching. All three reset paths funnel through **one function** that rehashes, bumps the "
+  "counter and writes the audit row together, so no future caller can do one and forget the "
+  "others.")
+Small("There is also an audit table recording that a password changed, by whom and how (self / "
+      "trainer / CLI). It deliberately stores **no password and no hash** &mdash; a test asserts "
+      "those columns do not exist.")
+
+H2("11. Role separation, made visible")
 UL([
     "First account ever registered becomes the **trainer**; everyone after is a **member**.",
     "Login has a Trainer | Member toggle that must match the account, with a helpful error if not.",
@@ -1088,6 +1127,48 @@ TBL(["Suite", "Checks", "Examples of what it asserts"],
 P("**Roughly 220 individual assertions in total**, of which about 136 belong to Phases 1&ndash;6. "
   "Every suite ended green before its phase was committed.")
 
+H2("The committed suite (Phase 0.5 onward)")
+P("Everything above was written as a throwaway script. From Phase 0.5 they live in the repository "
+  "and are re-runnable by anyone:")
+Code("pip install -r requirements-dev.txt\npython -m pytest")
+TBL(["File", "Tests", "What it protects"],
+    [["`test_auth_and_roles.py`", "9", "First-user-becomes-trainer, role toggle, closed "
+      "self-registration, email validation, bcrypt hashing"],
+     ["`test_authorization.py`", "7", "The IDOR defences &mdash; a member reaching another "
+      "member's data or any trainer route. **The highest-stakes file**"],
+     ["`test_membership.py`", "6", "Month arithmetic, expiry states, roster ordering, dues totals"],
+     ["`test_routine_split_and_logging.py`", "8", "Library seeding, multi-body-part days, day "
+      "filtering, `logged_by`, and that routine edits never delete history"],
+     ["`test_attendance.py`", "7", "Idempotent marking, un-marking, attendance-driven inactivity"],
+     ["`test_progress_features.py`", "12", "Talking points, overload targets, body-weight trend"],
+     ["`test_account_recovery.py`", "19", "The three recovery paths, session invalidation, audit "
+      "trail, login throttling"],
+     ["`test_cli_set_password.py`", "8", "The break-glass script, including that it never prints a "
+      "password or a database credential"]],
+    [50, 14, 86])
+P("**76 tests, about two minutes to run.** Each gets a fresh throwaway SQLite database, so they "
+  "cannot interfere with each other or touch your real `gym.db`.")
+
+H3("Tests whose only job is to keep a bad idea out")
+P("Not every test checks that a feature works. Some exist to make a tempting mistake fail loudly "
+  "if anyone adds it later:")
+UL([
+    "`test_body_weight_never_shows_a_progress_bar_or_goal_percentage` &mdash; body weight is not "
+    "monotonic, so a bar moving backwards punishes a member who did nothing wrong.",
+    "`test_talking_points_never_moralise` &mdash; fails if the app ever mentions diet, effort or "
+    "discipline, none of which it can observe.",
+    "`test_thin_data_produces_no_talking_points_rather_than_filler` &mdash; silence is correct when "
+    "there is nothing true to say.",
+    "`test_removing_an_exercise_from_a_routine_keeps_its_log_history` &mdash; the most important "
+    "data rule in the app.",
+    "`test_new_member_with_no_attendance_is_not_flagged` &mdash; stops the roster turning red for "
+    "everyone the day a feature ships.",
+])
+Callout("**This is a category worth knowing about.** Most people think of tests as proving that "
+        "code works. These prove that a //judgement// holds &mdash; a product decision, an ethical "
+        "line, a data guarantee. Code review forgets; a failing test does not. If a decision "
+        "matters enough to argue about, it is worth a test.")
+
 NewPage()
 
 # ===================================================================
@@ -1129,8 +1210,16 @@ TBL(["#", "What failed", "Real bug or test error?", "What I did"],
       "also revealed the page said \"6.0 weeks\" instead of \"6 weeks\" &mdash; **a real cosmetic "
       "flaw I fixed.**"],
      ["8", "A test file named `re.py`", "**Test error**",
-      "It shadowed Python's built-in `re` module and broke the interpreter. Renamed."]],
+      "It shadowed Python's built-in `re` module and broke the interpreter. Renamed."],
+     ["9", "Phase 0.5: a member who attended today was still \"flagged\"", "**Test error**",
+      "I asserted //not flagged//, but the member had one session in the last 7 days, which the "
+      "Phase 4 new-member rule correctly flags. The app was right; my test had conflated "
+      "**inactive** with **flagged**. Rewrote it to assert the precise guarantee, and added a "
+      "second test for the fully-clear case."]],
     [8, 44, 24, 74])
+Small("Failure 9 is the clearest example of the pattern in this whole table: a red result that "
+      "looked like a bug, was investigated, and turned out to be a sloppy assertion. Had I "
+      "\"fixed\" the app to make it pass, I would have broken a correct feature.")
 
 H2("Bugs caught by reading the code, not by tests")
 P("Worth recording, because it shows tests are not the only safety net:")
@@ -1153,8 +1242,8 @@ TBL(["What", "How it was caught", "Why it mattered"],
 
 H2("The honest scorecard")
 UL([
-    "**8 test failures** across the project. **1 was a genuine application bug** (the migration "
-    "guard). **1 revealed a genuine cosmetic flaw** (\"6.0 weeks\"). **5 were my own test-writing "
+    "**9 test failures** across the project. **1 was a genuine application bug** (the migration "
+    "guard). **1 revealed a genuine cosmetic flaw** (\"6.0 weeks\"). **6 were my own test-writing "
     "mistakes. 1 was a Windows console limitation.**",
     "**4 further bugs were caught by reading code** before they ever ran &mdash; including one "
     "(the targets panel) that would have broken a stated requirement.",
@@ -1177,15 +1266,22 @@ H1("Part 10 &mdash; What is weak, honestly")
 P("Every project has debt. Naming it is how you stay in control of it. Ordered by how much it "
   "would matter.")
 
-H2("1. The tests are not in the repository &mdash; the biggest weakness")
-P("Every test in this project was written as a **throwaway script**, run, and deleted. There is no "
-  "`tests/` folder, no `pytest`, no automation.")
-P("**Why that is bad:** nobody can re-run them. If you change one line next month, you have no way "
-  "to check you did not break Phase 3. All that verification work is gone &mdash; only this "
-  "document records that it happened.")
-P("**The fix:** move them into a `tests/` directory, run with `pytest`, and add a GitHub Action so "
-  "they run automatically on every push. Perhaps a day of work. **If you do one thing to this "
-  "project, do this.**")
+H2("1. The tests were not in the repository &mdash; FIXED")
+P("This was written up as the single biggest weakness in the project, and it has since been "
+  "fixed. It is left in the document because //how// it was wrong is worth remembering.")
+P("**The problem:** every test up to Phase 6 was a **throwaway script** &mdash; written, run, and "
+  "deleted. Nobody could re-run them. Change one line next month and you had no way to check you "
+  "had not broken Phase 3. All that verification work existed only as a claim in this document.")
+P("**The fix, now done:** a `tests/` directory with **76 tests** run by `pytest`, covering every "
+  "phase. Each test gets its own throwaway SQLite database and never touches `gym.db`.")
+Code("pip install -r requirements-dev.txt\npython -m pytest          # 76 tests, about 2 minutes")
+P("**Still outstanding:** a GitHub Action so they run automatically on every push (see the next "
+  "item). Running them is currently a thing you have to remember to do.")
+Callout("**The lesson, which is the reason this entry stays in the document:** the work of testing "
+        "and the //asset// of a test suite are not the same thing. All of that testing genuinely "
+        "happened, and it genuinely caught bugs &mdash; but until it was committed, none of it "
+        "could protect the project a second time. **Write tests into the repository from the "
+        "first day, not at the end.**")
 
 H2("2. No automated deployment checks (CI/CD)")
 P("Right now `git push` deploys straight to the live site. If the code were broken, it would deploy "
@@ -1265,8 +1361,11 @@ TBL(["Feature", "Why it is worth building", "Why we did NOT build it yet"],
 
 H2("What I would do differently from the start")
 UL([
-    "**Write the tests as a committed suite from day one.** Not throwaway scripts. This is the "
-    "clearest mistake in the project, and it was mine.",
+    "**Write the tests as a committed suite from day one.** Not throwaway scripts. This was the "
+    "clearest mistake in the project, and it was mine. It has since been fixed &mdash; 76 tests now "
+    "live in `tests/` &mdash; but retrofitting them took longer than writing them alongside the "
+    "code would have, and some early behaviour had to be reverse-engineered from the app rather "
+    "than pinned down when it was designed.",
     "**Settle the positioning before building.** We built member-first, then re-positioned to "
     "trainer-first. Everything survived, but the Planner feature is now dead weight because it was "
     "built before we knew who the customer was. **Ask \"who is paying for this?\" before writing "

@@ -237,8 +237,10 @@ UL([
     "**Parts 4&ndash;7** are the technical core: technologies, database, security, features.",
     "**Parts 8&ndash;9** are about testing &mdash; what we tested, what broke, and what I did about it. "
     "This is where most of the real learning is.",
-    "**Parts 10&ndash;14** are honest self-assessment: weaknesses, what to improve, and the questions "
+    "**Parts 10&ndash;15** are honest self-assessment: weaknesses, what to improve, and the questions "
     "you should be asking.",
+    "**Part 14** is about keeping this project usable months from now &mdash; read it if you "
+    "plan to come back to this.",
     "There is a **glossary** at the end. If a word is unfamiliar, it is probably there.",
 ])
 
@@ -1283,9 +1285,19 @@ Callout("**The lesson, which is the reason this entry stays in the document:** t
         "could protect the project a second time. **Write tests into the repository from the "
         "first day, not at the end.**")
 
-H2("2. No automated deployment checks (CI/CD)")
-P("Right now `git push` deploys straight to the live site. If the code were broken, it would deploy "
-  "broken. A CI pipeline would run the tests first and refuse to deploy on failure.")
+H2("2. No automated test run on push &mdash; FIXED")
+P("The tests existed but only ran when someone remembered to type `python -m pytest`. **A "
+  "guarantee that is only checked when you remember is not a guarantee.**")
+P("**The fix, now done:** a GitHub Action at `.github/workflows/tests.yml` runs the full suite on "
+  "every push and pull request, plus a check that the app still imports and starts. A red mark "
+  "appears against the commit within a couple of minutes.")
+Callout("**Why this matters more than it looks.** Several tests in this project protect a "
+        "//decision// rather than a behaviour &mdash; no body-weight progress bar, no moralising "
+        "talking points, routine edits never deleting history. Those decisions are only actually "
+        "enforced if the tests run. CI is what turns a written-down intention into something the "
+        "project defends by itself.")
+P("**Still outstanding:** the Action reports failures but does not //block// the Render deploy. "
+  "Render redeploys on push regardless. Gating deployment on a green build is the next step.")
 
 H2("3. Performance: the N+1 query problem")
 P("The roster loads each member, then runs several more queries //per member// for attendance, "
@@ -1489,7 +1501,77 @@ OL([
 
 NewPage()
 
-H1("Part 14 &mdash; Your checklist for the next project")
+H1("Part 14 &mdash; Keeping the context alive")
+
+P("This section exists because you asked the right question: //\"I want this project long term, "
+  "and if the context is gone it would be very tough in the future.\"// That is the correct thing "
+  "to worry about, and most projects die of exactly it.")
+
+Callout("**The thing to understand:** the conversation that built this app will end and be gone. "
+        "Everything you will still have in six months is what got //written into the "
+        "repository//. Context is not something you have &mdash; it is something you store.")
+
+H2("The five layers, and what each one survives")
+TBL(["Layer", "What it holds", "The failure it prevents"],
+    [["**`CLAUDE.md`** (repo root)", "The load-bearing rules, and pointers to everything else.",
+      "An AI assistant starting blind. Claude Code reads this file automatically at the start of "
+      "**every** session &mdash; it is the difference between a helper that knows the project and "
+      "one that guesses."],
+     ["**`README.md`**", "What the app is, how to run it, how to test it, links to all docs.",
+      "A human &mdash; including future you &mdash; landing on the repo and not knowing what they "
+      "are looking at."],
+     ["**`docs/CLAUDE.md`**", "Full technical state: schema, routes, constants, conventions.",
+      "Having to re-derive the design by reading 3,500 lines of code."],
+     ["**The handbook** (this PDF)", "The reasoning. Why each technology, why each number, what "
+      "was rejected.", "Repeating a mistake because nobody recorded why the current approach was "
+      "chosen."],
+     ["**`tests/` + CI**", "Decisions, enforced automatically.",
+      "Quiet erosion &mdash; someone undoing a deliberate choice because nothing objected."],
+     ["**`docs/RESUMING.md`**", "A fifteen-minute path back to productive.",
+      "The cost of re-entry being high enough that you never bother."]],
+    [30, 52, 68])
+
+H2("Why the tests are the strongest layer")
+P("Prose rots silently. A document can describe an app that no longer exists and nothing will tell "
+  "you &mdash; which makes a stale document //worse// than none, because it is trusted.")
+P("A test cannot do that. If the code changes and the test still passes, it is still true. If it "
+  "stops being true, you get a red mark. **Tests are the only documentation that is "
+  "self-verifying.**")
+P("That is why several tests in this project assert things that are not really about code at all:")
+UL([
+    "//body weight never gets a progress bar// &mdash; a product and ethical decision",
+    "//talking points never mention diet or effort// &mdash; a judgement about what the app may claim",
+    "//removing an exercise from a routine keeps its log history// &mdash; a data guarantee",
+])
+P("In six months you will not remember the reasoning behind any of those. The tests will remember "
+  "for you, and object if someone undoes them. **If a decision matters enough to argue about, it "
+  "is worth a test.**")
+
+H2("The rule for anything you add later")
+Callout("**Every change lands in three places, or it is not finished:**<br/><br/>"
+        "**1. The code** &mdash; the thing itself.<br/>"
+        "**2. A test** &mdash; so the behaviour is defended automatically.<br/>"
+        "**3. A document** &mdash; `docs/CLAUDE.md` for what it is, a commit message for why.<br/><br/>"
+        "Skipping (2) means it can be broken silently. Skipping (3) means nobody, including you, "
+        "will know why it exists. This project skipped (2) for six phases and had to pay it back "
+        "later &mdash; retrofitting cost more than writing them alongside would have.")
+
+H2("A note on working with an AI assistant specifically")
+P("The practical version of this: **a new session knows nothing except what is in the "
+  "repository.** So the quality of `CLAUDE.md` directly determines the quality of the help you "
+  "get. If it says //\"authorisation is enforced in crud.py, never in a template\"//, that rule "
+  "gets followed. If it does not, the rule is a coin flip.")
+P("Concretely, the first thing to do in any future session on this project is ask for the plan "
+  "before the code, and check the plan against the rules in `CLAUDE.md`. If a proposed change "
+  "would break one of them, that is the moment to catch it.")
+Small("Practical detail worth knowing: Claude Code looks for `CLAUDE.md` in the **project root**. "
+      "Ours was moved into `docs/` at one point, which silently stopped it being loaded &mdash; "
+      "every session started blind and nobody noticed. There is now a short root file that points "
+      "at the detailed one.")
+
+NewPage()
+
+H1("Part 15 &mdash; Your checklist for the next project")
 
 H2("Before any code is written")
 UL([

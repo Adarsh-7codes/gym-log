@@ -1,83 +1,107 @@
-# Gym Log
+# GymLog
 
-FastAPI + Postgres + JWT auth gym log tracker for one trainer and their members.
+A gym management and workout-tracking web app for **one trainer and their
+members**, built to be used on a phone on the gym floor.
 
-## Roles
+**Live:** https://gymlog-jtd8.onrender.com
 
-- **trainer**: sees and manages every member's logs, manages the exercise list.
-- **member**: sees and manages only their own logs.
+---
 
-The first account ever registered becomes the trainer; every account after
-that registers as a member. There's no separate "make someone a trainer"
-endpoint -- with one trainer this doesn't need to be self-service.
+## What it does
 
-## Local setup
+The trainer and the member need opposite things, so the app gives them two
+different interfaces over one database.
+
+| | Member | Trainer |
+|---|---|---|
+| Opens it | 1–2 times a week, between sets | every day |
+| Needs | **speed** — log a set with almost no typing | **scanning** — spot the 3 people who need attention out of 30 |
+
+**Member:** picks exercises from a categorised library, sets a weekly split
+(Monday = chest + arms), and logs sets from a screen showing only *today's*
+exercises — with the last session's weight pre-filled and +/− steppers, so the
+common case needs zero typing.
+
+**Trainer:** a roster showing who owes money, whose membership expires this
+week, who has stopped attending and who has stopped progressing — plus one-tap
+attendance, membership and dues tracking, strength targets, and factual talking
+points for each member.
+
+## Feature summary
+
+- **Exercise library** — 48 seeded exercises across 6 body parts and 3
+  difficulty levels, editable by the trainer
+- **Weekly split** — multiple body parts per weekday; the log screen follows it
+- **Fast logging** — numeric keypads, steppers, auto-carry of last weight
+- **Attendance** — one-tap "Today" screen; drives the inactivity warnings
+- **Membership & dues** — plans, expiry, paid/pending, renewal history
+- **Stall detection** — flags lifts that have plateaued over 3 sessions
+- **Talking points** — up to 3 true, non-judgemental lines per member
+- **Overload targets** — trainer-set goals, checkable against the logs
+- **Body weight** — trend and rate only, deliberately never a progress bar
+- **Account recovery** — trainer resets member passwords; break-glass CLI for
+  total lockout
+
+## Running it locally
 
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-With no `DATABASE_URL` set, it falls back to a local `gym.db` SQLite file --
-fine for trying things out. Set `DATABASE_URL` (see `.env.example`) to point
-at Postgres for anything real.
+Open http://localhost:8000. With no `DATABASE_URL` set it uses a local SQLite
+file (`gym.db`) — no database setup required. **The first account you register
+becomes the trainer**; everyone after is a member.
 
-## curl walkthrough
+To test from your phone on the same wifi:
 
 ```bash
-BASE=http://localhost:8000
-
-# Register the trainer (first user ever = trainer)
-curl -s -X POST $BASE/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Ada Trainer","email":"trainer@example.com","password":"pw12345"}'
-
-# Register a member
-curl -s -X POST $BASE/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Mo Member","email":"mo@example.com","password":"pw12345"}'
-
-# Log in (OAuth2 password flow: form-encoded, "username" is the email)
-TRAINER_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
-  -d "username=trainer@example.com&password=pw12345" | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-
-MEMBER_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
-  -d "username=mo@example.com&password=pw12345" | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-
-# Trainer adds an exercise
-curl -s -X POST $BASE/api/exercises \
-  -H "Authorization: Bearer $TRAINER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Back Squat"}'
-
-# Member logs a workout (exercise_id=1 from the response above)
-curl -s -X POST $BASE/api/logs \
-  -H "Authorization: Bearer $MEMBER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"exercise_id":1,"date":"2026-07-07","weight":100,"reps":5,"sets":3,"notes":"felt good"}'
-
-# Member sees only their own logs
-curl -s $BASE/api/logs -H "Authorization: Bearer $MEMBER_TOKEN"
-
-# Authorization check: member tries to view another user's logs by
-# forging the user_id query param -- server ignores it and returns only
-# their own logs anyway (enforced in app/crud.py, not just hidden in the UI)
-curl -s "$BASE/api/logs?user_id=1" -H "Authorization: Bearer $MEMBER_TOKEN"
-
-# Trainer sees everyone's logs
-curl -s $BASE/api/logs -H "Authorization: Bearer $TRAINER_TOKEN"
-
-# Trainer filters to just that member
-curl -s "$BASE/api/logs?user_id=2" -H "Authorization: Bearer $TRAINER_TOKEN"
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Interactive API docs are at `/docs` (Swagger's "Authorize" button works with
-the `/api/auth/login` form directly).
+## Running the tests
 
-## Deploying (Railway / Render / EC2)
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
 
-1. Add a Postgres instance -- Railway/Render set `DATABASE_URL` for you
-   automatically when you attach one.
-2. Set env vars from `.env.example`: `JWT_SECRET` (generate a real one),
-   `COOKIE_SECURE=true` once you're on https.
-3. Deploy the `Dockerfile` as-is; it reads `$PORT` at runtime.
+76 tests, about two minutes. Each gets its own throwaway database and never
+touches your `gym.db`. They also run automatically on every push via GitHub
+Actions. See [`tests/README.md`](tests/README.md).
+
+## Documentation
+
+| Document | What it is |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | Start here — the rules and where everything lives |
+| [`docs/CLAUDE.md`](docs/CLAUDE.md) | Full technical state: schema, routes, conventions |
+| [`docs/GymLog-Project-Handbook.pdf`](docs/GymLog-Project-Handbook.pdf) | 39 pages on *why* — every technology, test and decision |
+| [`docs/RESUMING.md`](docs/RESUMING.md) | Coming back after a break? Read this first |
+| [`tests/README.md`](tests/README.md) | What each test file protects |
+| [`docs/authz-check.md`](docs/authz-check.md) | Re-runnable authorisation proof |
+
+## Tech
+
+Python 3.12 · FastAPI · SQLAlchemy 2.x · Jinja2 (server-rendered, no JS
+framework) · SQLite locally / PostgreSQL in production · bcrypt · JWT in an
+httponly cookie · Docker · deployed on Render.
+
+Charts are hand-generated inline SVG — no charting library, nothing extra for a
+member to download on gym wifi.
+
+## Deploying
+
+Push to `main`. Render rebuilds from the `Dockerfile` and redeploys
+automatically; `render.yaml` defines the web service and its PostgreSQL
+database. New tables and columns are created on startup, so there is no manual
+migration step.
+
+## Utility scripts
+
+```bash
+python scripts/set_password.py --list        # accounts (no password data)
+python scripts/set_password.py --email <e> --password <p>   # break-glass reset
+python scripts/reset_demo.py                 # wipe demo data, keep the library
+python scripts/build_handbook.py             # regenerate the PDF handbook
+```

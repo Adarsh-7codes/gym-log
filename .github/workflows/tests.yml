@@ -1,0 +1,50 @@
+# Runs the test suite on every push and pull request.
+#
+# Why this exists: the tests encode decisions, not just behaviour -- "body
+# weight never gets a progress bar", "routine edits never delete log history".
+# A decision that is only enforced when someone remembers to run pytest is not
+# enforced at all. This makes it automatic.
+#
+# A red X here means something you changed broke a guarantee made earlier.
+# Read the failing test's name before changing any code: several of them exist
+# to stop a tempting mistake, and the right fix is usually to revert, not to
+# edit the test.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:      # lets you trigger a run by hand from the Actions tab
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run the test suite
+        # No DATABASE_URL is set, so every test uses its own throwaway SQLite
+        # file -- the live Render database is never touched by CI.
+        run: python -m pytest -v
+
+      - name: Check the app still imports and starts
+        # Catches breakage that a unit test can miss, e.g. a bad import or a
+        # template that fails to load at startup.
+        run: python -c "import app.main; print('app imports cleanly')"

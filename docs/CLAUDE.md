@@ -2,6 +2,11 @@
 
 A full-stack gym tracking web app for **one trainer and their members**. Built with FastAPI + PostgreSQL, deployed on Render. This file is the single source of truth for context — read it first.
 
+> For the *narrative* of how recent work was built — every change, why it was
+> made, what each test guards, and any failures hit along the way — see
+> [`PROJECT-REPORT.md`](PROJECT-REPORT.md). This file stays terse; that one keeps
+> the story.
+
 ---
 
 ## 1. What it is
@@ -90,6 +95,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/members/{user_id}/targets` POST, `/targets/{id}/delete` POST (trainer).
 - `/members/{user_id}/password` POST (trainer): reset a member's password.
 - `/account`, `/account/password` (any role): recovery contacts and self-service change.
+- `/account/profile` POST (any role): change your own **name + login email** via `crud.update_profile()` — validates non-blank, reuses the app's email validation, rejects an email already used by another account, and **does not touch the role**. This is how the seeded demo trainer becomes a real account. Session survives the change (the JWT subject is the user id, not the email).
 - `/exercises` (trainer): manage the raw exercise list.
 - `/danger/reset` — demo reset, **local only** (see §10).
 - `/register` — 403 once a trainer exists (renders `registration_closed.html`).
@@ -113,7 +119,7 @@ python scripts/set_password.py --email <email> --password <new_password>
 Reads `DATABASE_URL` exactly like the app (including the `postgres://` rewrite); with none set it operates on local SQLite. For the **live** database use Render → gymlog → **Shell**, where `DATABASE_URL` is already set — nothing to paste and no credential to leak. Uses the app's own hashing so it can never drift, never prints the password, and masks remote credentials in its output.
 
 ## 11. Conventions / gotchas
-- **Tests live in `tests/` and are run with `pytest`** (76 tests, ~2 min). `pip install -r requirements-dev.txt` then `python -m pytest`. Each test gets a throwaway SQLite database and never touches `gym.db`. See `tests/README.md`.
+- **Tests live in `tests/` and are run with `pytest`** (84 tests, ~2–3 min). `pip install -r requirements-dev.txt` then `python -m pytest`. Each test gets a throwaway SQLite database and never touches `gym.db`. See `tests/README.md`.
 - **Schema changes are extend-only:** new columns added idempotently in `app/database.py::ensure_schema()` (runs on startup). Each block guards its own table independently — a missing table must never skip the others' migrations. New tables handled by `create_all`. Exercise library re-seeded on every startup (idempotent by name).
 - Fresh Postgres on Render auto-creates all tables + seeds on first boot — no manual migration.
 - Passwords never retrievable (bcrypt one-way). To *know* a member's password, the trainer sets it via Members → Add member.

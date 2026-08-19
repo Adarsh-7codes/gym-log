@@ -41,6 +41,8 @@ points for each member.
 - **Body weight** — trend and rate only, deliberately never a progress bar
 - **Account recovery** — trainer resets member passwords; break-glass CLI for
   total lockout
+- **Edit your own account** — any user can change their own name and login email
+  from **Account → Your details** (turns the seeded demo trainer into a real one)
 
 ## Running it locally
 

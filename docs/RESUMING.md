@@ -75,6 +75,12 @@ That path touches almost every feature in the app.
   member's password, set it for them.
 - **Free-tier Render sleeps** after ~15 minutes idle; the first request then
   takes 30–60 seconds. Open the URL a few minutes before showing anyone.
+- **How do I change the trainer's name/email?** Sign in as the trainer →
+  **☰ → Account → "Your details"** → edit and save. The email is your login, so
+  you sign in with the new one next time (your current session stays valid). The
+  role stays `trainer`. Do this on the **live** site to rename the demo account —
+  local and live are separate databases. To change the *password*, use
+  **Account → change password** (Phase 0.5), which signs you out everywhere.
 
 ## 6. Check the live deployment
 

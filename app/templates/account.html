@@ -17,6 +17,30 @@
 {% endif %}
 
 <div class="panel" style="max-width:480px;margin-bottom:20px">
+  <strong style="font-size:14px">Your details</strong>
+  <p class="muted" style="margin:6px 0 12px;font-size:13px">
+    Your email is what you sign in with. Changing it here changes your login.
+  </p>
+  <form method="post" action="/account/profile">
+    <div class="field">
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" value="{{ current_user.name }}" required>
+    </div>
+    <div class="field">
+      <label for="email">Email (your login)</label>
+      <input id="email" type="email" name="email" value="{{ current_user.email }}" required>
+    </div>
+    <button type="submit">Save details</button>
+  </form>
+  {% if current_user.role.value == 'trainer' %}
+  <p class="muted" style="margin:12px 0 0;font-size:12px">
+    Your role stays <strong>trainer</strong> — only the name and login email change.
+    Use this to turn the demo account into your own.
+  </p>
+  {% endif %}
+</div>
+
+<div class="panel" style="max-width:480px;margin-bottom:20px">
   <strong style="font-size:14px">Recovery contact</strong>
   <p class="muted" style="margin:6px 0 12px;font-size:13px">
     Not used to send anything today — stored so account recovery has a known contact.

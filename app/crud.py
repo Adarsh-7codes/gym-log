@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote_plus
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -392,6 +392,62 @@ def last_attendance(db: Session, user_id: int) -> Optional[date]:
     return db.scalar(
         select(func.max(Attendance.date)).where(Attendance.user_id == user_id)
     )
+
+
+# --- Account details ----------------------------------------------------
+
+
+def update_profile(db: Session, user: User, *, name: str, email: str) -> None:
+    """Change a user's own display name and login email.
+
+    This is how the seeded demo trainer becomes a real one: same account, new
+    identity. The role is deliberately not editable here.
+    """
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name:
+        raise ValueError("Name cannot be blank")
+    if not email:
+        raise ValueError("Email cannot be blank")
+    clash = db.scalar(select(User).where(User.email == email, User.id != user.id))
+    if clash is not None:
+        raise ValueError("That email is already used by another account")
+    user.name = name
+    user.email = email
+    db.commit()
+
+
+def delete_member(db: Session, member: User) -> None:
+    """Permanently remove a member and everything belonging to them.
+
+    Dependent rows are deleted explicitly rather than leaning on ON DELETE
+    CASCADE: SQLite does not enforce foreign keys unless the pragma is on, so
+    relying on the database would quietly behave differently locally and in
+    production. Explicit is identical on both.
+    """
+    if member.role != Role.member:
+        raise Forbidden("Only member accounts can be deleted")
+
+    uid = member.id
+    # Children first, then rows that merely reference the user.
+    db.execute(
+        delete(PlanItem).where(
+            PlanItem.plan_day_id.in_(select(PlanDay.id).where(PlanDay.user_id == uid))
+        )
+    )
+    for model in (PlanDay, SplitDay, MemberRoutine, Target, BodyWeight, Attendance,
+                  Membership, Log):
+        db.execute(delete(model).where(model.user_id == uid))
+    db.execute(delete(PasswordChange).where(PasswordChange.user_id == uid))
+    # Audit rows this member wrote about someone else lose their author, not
+    # the record that a change happened.
+    db.execute(
+        update(PasswordChange)
+        .where(PasswordChange.changed_by_user_id == uid)
+        .values(changed_by_user_id=None)
+    )
+    db.delete(member)
+    db.commit()
 
 
 # --- Password changes ---------------------------------------------------

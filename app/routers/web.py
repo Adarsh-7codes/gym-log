@@ -887,6 +887,35 @@ def account_page(
     )
 
 
+@router.post("/account/profile")
+def account_profile_save(
+    name: str = Form(...),
+    email: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_web),
+):
+    """Change your own name and login email.
+
+    This is how the seeded demo trainer becomes the real one: same account,
+    new identity. The role is not editable here.
+    """
+    normalized = _normalize_email(email)
+    if not normalized:
+        return RedirectResponse(
+            url="/account?saved=" + quote_plus("Please enter a valid email address"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        crud.update_profile(db, current_user, name=name, email=normalized)
+    except ValueError as exc:
+        return RedirectResponse(url="/account?saved=" + quote_plus(str(exc)),
+                                status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/account?saved=" + quote_plus(f"Saved. Sign in with {normalized} from now on."),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @router.post("/account")
 def account_save(
     recovery_email: str = Form(""),
@@ -909,6 +938,36 @@ def account_save(
     current_user.recovery_phone = recovery_phone.strip() or None
     db.commit()
     return RedirectResponse(url="/account?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/members/{user_id}/delete")
+def member_delete(
+    user_id: int,
+    confirm_name: str = Form(""),
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    """Permanently remove a member and all of their data.
+
+    Guarded twice: only member accounts can be deleted (never the trainer,
+    never yourself), and the typed name must match.
+    """
+    target = db.get(User, user_id)
+    if target is None or target.role != Role.member:
+        return RedirectResponse(url="/members?reset_error=" + quote_plus("Member not found"),
+                                status_code=status.HTTP_303_SEE_OTHER)
+    if confirm_name.strip().lower() != target.name.strip().lower():
+        return RedirectResponse(
+            url="/members?reset_error=" + quote_plus(
+                f"Type the member's name exactly to delete them ({target.name})."),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    name = target.name
+    crud.delete_member(db, target)
+    return RedirectResponse(
+        url="/members?reset_ok=" + quote_plus(f"{name} and all their data were deleted"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 # --- Body weight (trainer records at the gym scale) ---------------------

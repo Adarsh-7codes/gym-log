@@ -66,6 +66,20 @@
           </details>
           {% endif %}
           <a class="btn ghost" href="/progress?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">Progress</a>
+          {% if row.user.role.value == 'member' %}
+          <details class="resetpw">
+            <summary class="btn danger" style="padding:6px 12px;font-size:13px">Delete</summary>
+            <form method="post" action="/members/{{ row.user.id }}/delete" class="resetpw-form">
+              <label>This permanently deletes <strong>{{ row.user.name }}</strong> and
+                <strong>all</strong> their logs, attendance, memberships, routines and targets.
+                It cannot be undone.<br><br>
+                Type <strong>{{ row.user.name }}</strong> to confirm:</label>
+              <input type="text" name="confirm_name" required autocomplete="off"
+                     placeholder="{{ row.user.name }}">
+              <button type="submit" class="btn danger" style="width:100%">Delete permanently</button>
+            </form>
+          </details>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

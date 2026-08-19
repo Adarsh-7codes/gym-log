@@ -5,9 +5,11 @@ pages depend on `get_current_user_web`, which raises WebAuthRequired when the
 cookie is missing/invalid -- main.py maps that to a redirect to /login.
 """
 import os
+import time
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import quote_plus
 from typing import Optional
 
 from email_validator import EmailNotValidError, validate_email
@@ -21,8 +23,10 @@ from app import crud
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user_web, get_current_user_web_optional, require_trainer_web
-from app.models import BodyPart, Difficulty, Exercise, Log, MembershipStatus, Role, User
-from app.security import create_access_token, hash_password, verify_password
+from app.models import (
+    BodyPart, Difficulty, Exercise, Log, MembershipStatus, PasswordChangeMethod, Role, User,
+)
+from app.security import hash_password, token_for_user, verify_password
 
 router = APIRouter(tags=["web"], include_in_schema=False)
 
@@ -33,7 +37,7 @@ COOKIE_MAX_AGE = settings.access_token_expire_minutes * 60
 
 
 def _set_auth_cookie(response: RedirectResponse, user: User) -> None:
-    token = create_access_token(subject=str(user.id), extra_claims={"role": user.role.value})
+    token = token_for_user(user)
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -82,6 +86,33 @@ def login_page(request: Request, next: str = "/dashboard", error: Optional[str] 
     )
 
 
+# Simple in-process login throttle. Deliberately not Redis: one web process,
+# and the goal is to blunt password guessing, not to build a security product.
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_SECONDS = 120
+_login_failures: dict = {}
+
+
+def _login_locked_for(key: str) -> int:
+    """Seconds remaining in a lockout, or 0 if not locked."""
+    count, first_at = _login_failures.get(key, (0, 0.0))
+    if count < LOGIN_MAX_FAILURES:
+        return 0
+    remaining = int(LOGIN_LOCKOUT_SECONDS - (time.monotonic() - first_at))
+    if remaining <= 0:
+        _login_failures.pop(key, None)
+        return 0
+    return remaining
+
+
+def _record_login_failure(key: str) -> None:
+    count, first_at = _login_failures.get(key, (0, 0.0))
+    if count == 0 or (time.monotonic() - first_at) > LOGIN_LOCKOUT_SECONDS:
+        _login_failures[key] = (1, time.monotonic())
+    else:
+        _login_failures[key] = (count + 1, first_at)
+
+
 @router.post("/login")
 def login_submit(
     email: str = Form(...),
@@ -93,16 +124,31 @@ def login_submit(
     if role not in ("trainer", "member"):
         role = "member"
     normalized = _normalize_email(email)
+    key = (normalized or email.strip().lower())
+
+    def bounce(msg: str, r: str = role):
+        return RedirectResponse(
+            url=f"/login?error={quote_plus(msg)}&role={r}&next={_safe_next(next)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    locked = _login_locked_for(key)
+    if locked:
+        return bounce(f"Too many attempts. Try again in {locked} seconds.")
+
     user = db.scalar(select(User).where(User.email == normalized)) if normalized else None
     if not user or not verify_password(password, user.password_hash):
-        url = f"/login?error=Incorrect+email+or+password&role={role}&next={_safe_next(next)}"
-        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
-    # Credentials are valid, but the account's role must match the chosen tab.
+        _record_login_failure(key)
+        return bounce("Incorrect email or password")
+
+    # Credentials are good but the role toggle is wrong. Previously this looked
+    # identical to a bad password, which made a simple mis-tap feel like a
+    # lockout. Point at the toggle without confirming the account exists.
     if user.role.value != role:
-        actual = user.role.value
-        msg = f"This is a {actual} account. Please use the {actual.capitalize()} tab."
-        url = f"/login?error={msg.replace(' ', '+')}&role={actual}&next={_safe_next(next)}"
-        return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+        _record_login_failure(key)
+        return bounce("Login failed — check that you've selected the correct role above.", role)
+
+    _login_failures.pop(key, None)
     response = RedirectResponse(url=_safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
     _set_auth_cookie(response, user)
     return response
@@ -749,6 +795,122 @@ def reset_do(
     )
 
 
+# --- Account & password recovery ----------------------------------------
+
+
+@router.post("/members/{user_id}/password")
+def member_password_reset(
+    user_id: int,
+    new_password: str = Form(...),
+    db: Session = Depends(get_db),
+    trainer: User = Depends(require_trainer_web),
+):
+    """Trainer resets a member's password. Covers ~95% of real lockouts."""
+    dest = f"/members?reset_error="
+    target = db.get(User, user_id)
+    # A trainer resets members, not themselves and not another trainer.
+    if target is None or target.role != Role.member:
+        return RedirectResponse(url="/members?reset_error=Member+not+found",
+                                status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        crud.set_password(
+            db, target, new_password,
+            method=PasswordChangeMethod.trainer, changed_by=trainer,
+        )
+    except ValueError as exc:
+        return RedirectResponse(url=dest + str(exc).replace(" ", "+"),
+                                status_code=status.HTTP_303_SEE_OTHER)
+    # Name the member back, never the password.
+    return RedirectResponse(
+        url=f"/members?reset_ok={quote_plus(target.name)}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/account/password", response_class=HTMLResponse)
+def account_password_page(
+    request: Request,
+    error: Optional[str] = None,
+    current_user: User = Depends(get_current_user_web),
+):
+    return templates.TemplateResponse(
+        "account_password.html",
+        {"request": request, "current_user": current_user, "error": error},
+    )
+
+
+@router.post("/account/password")
+def account_password_submit(
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_web),
+):
+    """Change your own password. Requires the current one; this is not recovery."""
+    def fail(msg: str):
+        return RedirectResponse(
+            url=f"/account/password?error={quote_plus(msg)}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    # Deliberately generic: never reveal which part was wrong.
+    if not verify_password(current_password, current_user.password_hash):
+        return fail("Could not change password. Check your current password and try again.")
+    if new_password != confirm_password:
+        return fail("The new passwords did not match.")
+    try:
+        crud.set_password(
+            db, current_user, new_password,
+            method=PasswordChangeMethod.self_service, changed_by=current_user,
+        )
+    except ValueError as exc:
+        return fail(str(exc))
+
+    # The version bump already invalidated this session's token; clear the
+    # cookie too so the browser isn't left holding a dead one.
+    response = RedirectResponse(
+        url="/login?error=" + quote_plus("Password changed. Please sign in again."),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    response.delete_cookie(COOKIE_NAME)
+    return response
+
+
+@router.get("/account", response_class=HTMLResponse)
+def account_page(
+    request: Request,
+    saved: Optional[str] = None,
+    current_user: User = Depends(get_current_user_web),
+):
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "current_user": current_user, "saved": saved},
+    )
+
+
+@router.post("/account")
+def account_save(
+    recovery_email: str = Form(""),
+    recovery_phone: str = Form(""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_web),
+):
+    """Recovery contacts. Not used by any automated flow in v1 (see Phase 0.5)."""
+    email = recovery_email.strip()
+    if email:
+        normalized = _normalize_email(email)
+        if not normalized:
+            return RedirectResponse(
+                url="/account?saved=Please+enter+a+valid+recovery+email",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        current_user.recovery_email = normalized
+    else:
+        current_user.recovery_email = None
+    current_user.recovery_phone = recovery_phone.strip() or None
+    db.commit()
+    return RedirectResponse(url="/account?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
 # --- Body weight (trainer records at the gym scale) ---------------------
 
 
@@ -954,6 +1116,8 @@ def membership_delete(
 def members_page(
     request: Request,
     error: Optional[str] = None,
+    reset_ok: Optional[str] = None,
+    reset_error: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_trainer_web),
 ):
@@ -975,7 +1139,7 @@ def members_page(
     ]
     return templates.TemplateResponse(
         "members.html",
-        {"request": request, "current_user": current_user, "rows": rows, "error": error},
+        {"request": request, "current_user": current_user, "rows": rows, "error": error, "reset_ok": reset_ok, "reset_error": reset_error},
     )
 
 

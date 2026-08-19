@@ -35,6 +35,21 @@ def ensure_schema() -> None:
                 # was distinguished -- treat them as member-entered.
                 conn.execute(text("UPDATE logs SET logged_by = 'member' WHERE logged_by IS NULL"))
 
+    # Phase 0.5: session invalidation + recovery contacts on the account.
+    if "users" in tables:
+        user_cols = {c["name"] for c in insp.get_columns("users")}
+        if "token_version" not in user_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0"))
+                conn.execute(text("UPDATE users SET token_version = 0 WHERE token_version IS NULL"))
+        for col, ddl in (
+            ("recovery_email", "ALTER TABLE users ADD COLUMN recovery_email VARCHAR(255)"),
+            ("recovery_phone", "ALTER TABLE users ADD COLUMN recovery_phone VARCHAR(40)"),
+        ):
+            if col not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+
     # Phase 2: who prescribed each routine entry. Pre-existing rows were all
     # self-selected by the member, so backfill them to 'member'.
     if "member_routines" in tables:

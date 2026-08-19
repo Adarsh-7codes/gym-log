@@ -26,7 +26,16 @@ def _user_from_token(token: Optional[str], db: Session) -> Optional[User]:
         return None
     if user_id is None:
         return None
-    return db.get(User, int(user_id))
+    user = db.get(User, int(user_id))
+    if user is None:
+        return None
+    # A password change bumps token_version, so tokens issued before it stop
+    # validating immediately -- otherwise a stale JWT stays usable for its full
+    # 7-day life after a reset. Tokens predating this field carry no claim, so
+    # they are treated as version 0.
+    if int(payload.get("tv", 0)) != int(user.token_version or 0):
+        return None
+    return user
 
 
 # --- JSON API: Authorization header, 401 on failure ---------------------

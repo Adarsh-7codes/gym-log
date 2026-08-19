@@ -27,5 +27,17 @@ def create_access_token(subject: str, extra_claims: Optional[dict] = None) -> st
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
+def token_for_user(user) -> str:
+    """The only way a login token should be minted.
+
+    Kept in one place so the token_version claim cannot be forgotten at a call
+    site -- without it, a password reset would not invalidate that session.
+    """
+    return create_access_token(
+        subject=str(user.id),
+        extra_claims={"role": user.role.value, "tv": int(user.token_version or 0)},
+    )
+
+
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])

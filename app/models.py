@@ -62,6 +62,13 @@ class User(Base):
     # ENUM type, so adding a role later is a normal migration, not an ALTER TYPE.
     role = Column(SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.member)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Bumped on every password change. JWTs carry the value they were issued
+    # with, so a mismatch invalidates every existing session for this account.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+    # Not used by any automated flow in v1. Recorded so manual recovery has a
+    # known contact, and so an emailed reset can be added without a migration.
+    recovery_email = Column(String(255), nullable=True)
+    recovery_phone = Column(String(40), nullable=True)
 
     logs = relationship("Log", back_populates="user", cascade="all, delete-orphan")
     memberships = relationship(
@@ -100,6 +107,28 @@ class Membership(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="memberships")
+
+
+class PasswordChangeMethod(str, enum.Enum):
+    self_service = "self"
+    trainer = "trainer"
+    cli = "cli"
+
+
+class PasswordChange(Base):
+    """Audit record that a password changed. Never stores the password or hash.
+
+    Answers "when did we last reset this account, and who did it" -- nothing
+    more. `changed_by_user_id` is null when the break-glass CLI script did it.
+    """
+
+    __tablename__ = "password_changes"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    changed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    method = Column(SAEnum(PasswordChangeMethod, native_enum=False, length=20), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class BodyWeight(Base):

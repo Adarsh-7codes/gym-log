@@ -212,6 +212,17 @@
     .targethead { font-size: 14px; font-weight: 600; }
     .targetmeta { font-size: 12px; color: var(--muted); margin-top: 3px; }
 
+    /* trainer's inline reset-password control */
+    .resetpw { display: inline-block; position: relative; }
+    .resetpw > summary { list-style: none; cursor: pointer; display: inline-block; }
+    .resetpw > summary::-webkit-details-marker { display: none; }
+    .resetpw-form { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 250px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.45); text-align: left; }
+    .resetpw-form label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+    .resetpw-form input { width: 100%; margin-bottom: 8px; }
+    .resetpw-form button { width: 100%; padding: 8px; font-size: 13px; }
+
     /* talking points + new-member cohort */
     .talkpanel { border-left: 3px solid var(--trainer); }
     .talklist { margin: 10px 0 0; padding-left: 20px; }
@@ -348,6 +359,7 @@
           <a href="/members" class="{% block nav_members %}{% endblock %}">Members</a>
           {% endif %}
           <div class="menu-sep"></div>
+          <a href="/account" class="{% block nav_account %}{% endblock %}">Account</a>
           <form method="post" action="/logout" style="margin:0">
             <button class="logout" type="submit">Log out</button>
           </form>

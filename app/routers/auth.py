@@ -7,7 +7,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Role, User
 from app.schemas import Token, UserCreate, UserOut
-from app.security import create_access_token, hash_password, verify_password
+from app.security import hash_password, token_for_user, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -41,7 +41,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = create_access_token(subject=str(user.id), extra_claims={"role": user.role.value})
+    token = token_for_user(user)
     return Token(access_token=token)
 
 

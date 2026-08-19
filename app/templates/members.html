@@ -6,6 +6,8 @@
 <p class="subtitle">Everyone with an account, and their logging activity.</p>
 
 {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+{% if reset_error %}<div class="alert">{{ reset_error }}</div>{% endif %}
+{% if reset_ok %}<div class="ok-flash">✓ Password reset for <strong>{{ reset_ok }}</strong>. Give them the new password in person — it is not shown again.</div>{% endif %}
 
 <div class="panel" style="margin-bottom:20px">
   <h3 style="margin:0 0 12px">Add a member account</h3>
@@ -51,6 +53,18 @@
         <td data-label="Last logged">{% if row.last_date %}{{ row.last_date.isoformat() }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="actions" style="text-align:right;white-space:nowrap">
           <a class="btn ghost" href="/dashboard?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">View logs</a>
+          {% if row.user.role.value == 'member' %}
+          <details class="resetpw">
+            <summary class="btn ghost" style="padding:6px 12px;font-size:13px">Reset password</summary>
+            <form method="post" action="/members/{{ row.user.id }}/password" class="resetpw-form"
+                  onsubmit="return confirm('Reset the password for {{ row.user.name }}?')">
+              <label for="pw{{ row.user.id }}">New password for <strong>{{ row.user.name }}</strong></label>
+              <input id="pw{{ row.user.id }}" type="text" name="new_password" minlength="8" required
+                     placeholder="at least 8 characters" autocomplete="off">
+              <button type="submit">Set password</button>
+            </form>
+          </details>
+          {% endif %}
           <a class="btn ghost" href="/progress?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">Progress</a>
         </td>
       </tr>

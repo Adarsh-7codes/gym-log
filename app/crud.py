@@ -17,6 +17,8 @@ from app.models import (
     Membership,
     MembershipStatus,
     MemberRoutine,
+    PasswordChange,
+    PasswordChangeMethod,
     PlanDay,
     PlanItem,
     Role,
@@ -24,6 +26,7 @@ from app.models import (
     Target,
     User,
 )
+from app.security import hash_password
 
 
 class Forbidden(Exception):
@@ -388,6 +391,56 @@ def attendance_streak(db: Session, user_id: int, today: Optional[date] = None) -
 def last_attendance(db: Session, user_id: int) -> Optional[date]:
     return db.scalar(
         select(func.max(Attendance.date)).where(Attendance.user_id == user_id)
+    )
+
+
+# --- Password changes ---------------------------------------------------
+
+MIN_PASSWORD_LENGTH = 8
+
+
+def validate_new_password(raw: str) -> str:
+    """Return the password if acceptable, else raise ValueError."""
+    if raw is None or not raw.strip():
+        raise ValueError("Password cannot be blank")
+    if len(raw) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    return raw
+
+
+def set_password(
+    db: Session,
+    user: User,
+    new_password: str,
+    *,
+    method: PasswordChangeMethod,
+    changed_by: Optional[User] = None,
+) -> None:
+    """The single place a password is ever changed.
+
+    Always does three things together, so no caller can do one and forget the
+    others: rehash, bump token_version (killing existing sessions), and record
+    that a change happened. The audit row never contains the password or hash.
+    """
+    validate_new_password(new_password)
+    user.password_hash = hash_password(new_password)
+    user.token_version = int(user.token_version or 0) + 1
+    db.add(
+        PasswordChange(
+            user_id=user.id,
+            changed_by_user_id=changed_by.id if changed_by else None,
+            method=method,
+        )
+    )
+    db.commit()
+
+
+def last_password_change(db: Session, user_id: int) -> Optional[PasswordChange]:
+    return db.scalar(
+        select(PasswordChange)
+        .where(PasswordChange.user_id == user_id)
+        .order_by(PasswordChange.created_at.desc(), PasswordChange.id.desc())
+        .limit(1)
     )
 
 

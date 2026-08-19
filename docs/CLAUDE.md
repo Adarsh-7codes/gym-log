@@ -43,13 +43,14 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - Trainer = gold theme; member = blue theme. Badge shown under the name; "Trainer view / Member view" banner on the dashboard.
 
 ## 7. Data model (SQLAlchemy — `app/models.py`)
-- `User(id, name, email, password_hash, role[trainer|member], created_at)`
+- `User(id, name, email, password_hash, role[trainer|member], created_at, token_version, recovery_email, recovery_phone)` — **Phase 0.5** added the last three. `token_version` is bumped on every password change and carried as the `tv` JWT claim, so a reset invalidates live sessions instead of leaving a stale token valid for its full 7 days.
 - `Exercise(id, name, body_part[chest/back/legs/shoulders/arms/core], difficulty[beginner/intermediate/advanced], equipment, instructions, demo_url)` — the **Exercise Library**, seeded on startup (48 exercises, ~8/body-part across difficulties, in `app/seed.py`).
 - `MemberRoutine(user_id, exercise_id, body_part, date_added, assigned_by[member|trainer])` — a member's standing list of exercises per body part. Removing a row does **not** delete logs. `assigned_by` (**Phase 2**) records who prescribed it; pre-existing rows backfilled to `member`.
 - `SplitDay(user_id, weekday 0–6, body_part)` — the **Weekly Split**: multiple rows per weekday allowed (e.g. Mon = chest AND arms).
 - `Log(user_id, exercise_id, date, weight, reps, sets, next_action, notes, feeling[easy/moderate/tough], logged_by[member|trainer])` — historical performance. `logged_by` = who entered it.
 - `BodyWeight(user_id, date, weight_kg, recorded_by[trainer|member], created_at)` — **Phase 6**. Unique `(user_id, date)`; re-entering a day updates rather than duplicating.
 - `Target(user_id, exercise_id, target_weight, target_reps, target_date, created_at)` — **Phase 5**. Trainer-set progressive-overload goal; every part is checkable against `Log` rows.
+- `PasswordChange(user_id, changed_by_user_id, method[self|trainer|cli], created_at)` — **Phase 0.5**. Audit that a password changed. **Never stores the password or hash.** `changed_by_user_id` is null when the CLI script did it.
 - `Attendance(user_id, date, marked_by[trainer|member], created_at)` — **Phase 3**. Ground truth for "did they come", independent of logging. **Unique `(user_id, date)`** makes repeat taps idempotent.
 - `Membership(user_id, plan_start, duration_months, expires_on, amount[Numeric(10,2)], status[paid|pending], paid_on, notes, created_at)` — **Phase 1**. One row per membership term; several rows per member = renewal history. "Current" = latest `plan_start`. `expires_on` is computed on save via `crud.add_months()` and **stored**, never derived at read time. No card/gateway/invoice data by design — the trainer collects cash/UPI and records the outcome.
 - `PlanDay` / `PlanItem` — older weekly planner (per-day focus + target sets/reps). Now **trainer-only** in nav; superseded for members by SplitDay + MemberRoutine.
@@ -63,6 +64,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - **Trainer edits member routine/split** (**Phase 2**): `/library?user_id=N` and `/split?user_id=N` operate on that member (trainer only — `crud.resolve_target_user()` makes a member's forged `user_id` fall back to self). Entry points are **Edit split / Edit routine** on the member's page; both screens show an "Editing X's …" banner. Trainer-assigned exercises show an **"assigned by your trainer"** badge on the member's log screen.
 - **Demo links**: every exercise on the member's day view has a **How?** link via `crud.demo_link()` — uses `Exercise.demo_url` when the trainer sets one (new optional field on the `/exercises` form), otherwise falls back to a **YouTube search** for the exercise name. Deliberately a search, not a hardcoded video id, so links can't rot or point at the wrong lift.
 - **Membership & dues** (**Phase 1**, trainer-only writes): on a member's page — current plan, expiry, payment status, full renewal history, "Add renewal" form and one-click **Mark paid**. Members see their own *"Valid till …"* + payment history **read-only**, with no dues-chasing language and no access to anyone else's. Currency is ₹ (display only).
+- **Account recovery** (**Phase 0.5**): three paths, no email/SMS dependency. (1) Trainer resets a member's password from the Members list — covers ~95% of lockouts. (2) Anyone changes their own password at `/account/password`, requiring the current one; success signs them out everywhere. (3) Trainer lockout → `scripts/set_password.py`, run against local SQLite or the live database from the Render shell. All three go through `crud.set_password()`, which rehashes, bumps `token_version` and writes the audit row together so no caller can do one and forget the others. Login now throttles after 5 failures for 120s, and a wrong role-toggle says so instead of looking like a bad password.
 - **Attendance** (**Phase 3**): trainer-only **`/today`** screen — one big tap target per member (one-handed phone use), tap again to un-mark, shows sessions-this-month, unmarked members sorted first, and `?on=` to catch up a previous day. Roster gains a **sessions this month** column. Members see their own count + **week streak** read-only (no input; 403 on `/today` and the toggle).
 - **Activity signal**: inactivity is sourced from **attendance**, with a logged workout also counting as evidence of presence (you can't log a session you didn't do). This is a deliberate softening of "replace logs with attendance": a strict swap would flag every member the day attendance ships (empty table), and would also flag someone who logs on a day the trainer forgot to mark. `last_date = max(last_attendance, last_log)`.
 - **Body weight** (**Phase 6**): trainer records weigh-ins (weekly cadence expected — most members don't own a scale). Shown as **trend and rate only**: *"Down 2.1 kg over 6 weeks — about 0.35 kg/week"*, plus an inline-SVG line on a `ROLLING_WINDOW_DAYS=7` rolling average so water-weight noise doesn't read as failure. Member sees their own read-only.
@@ -84,6 +86,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/today` (trainer): attendance screen. `/attendance/{user_id}/toggle` POST (trainer).
 - `/members/{user_id}/weight` POST, `/weight/{id}/delete` POST (trainer).
 - `/members/{user_id}/targets` POST, `/targets/{id}/delete` POST (trainer).
+- `/members/{user_id}/password` POST (trainer): reset a member's password.
+- `/account`, `/account/password` (any role): recovery contacts and self-service change.
 - `/exercises` (trainer): manage the raw exercise list.
 - `/danger/reset` — demo reset, **local only** (see §10).
 - `/register` — 403 once a trainer exists (renders `registration_closed.html`).
@@ -99,7 +103,15 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - **Self-registration is closed** once a trainer exists (403 on GET and POST); the trainer creates members at `/members`. Bootstrap exception: an empty DB allows the first account (becomes trainer). Override locally with `ALLOW_OPEN_REGISTRATION=true`.
 - Re-runnable proof: **`docs/authz-check.md`**.
 
+## 10c. Break-glass password reset (`scripts/set_password.py`)
+```
+python scripts/set_password.py --list
+python scripts/set_password.py --email <email> --password <new_password>
+```
+Reads `DATABASE_URL` exactly like the app (including the `postgres://` rewrite); with none set it operates on local SQLite. For the **live** database use Render → gymlog → **Shell**, where `DATABASE_URL` is already set — nothing to paste and no credential to leak. Uses the app's own hashing so it can never drift, never prints the password, and masks remote credentials in its output.
+
 ## 11. Conventions / gotchas
+- **Tests live in `tests/` and are run with `pytest`** (76 tests, ~2 min). `pip install -r requirements-dev.txt` then `python -m pytest`. Each test gets a throwaway SQLite database and never touches `gym.db`. See `tests/README.md`.
 - **Schema changes are extend-only:** new columns added idempotently in `app/database.py::ensure_schema()` (runs on startup). Each block guards its own table independently — a missing table must never skip the others' migrations. New tables handled by `create_all`. Exercise library re-seeded on every startup (idempotent by name).
 - Fresh Postgres on Render auto-creates all tables + seeds on first boot — no manual migration.
 - Passwords never retrievable (bcrypt one-way). To *know* a member's password, the trainer sets it via Members → Add member.
@@ -124,7 +136,6 @@ The app is sold to the **trainer/gym owner**, not to members. The trainer is the
 
 ## 13. Open ideas / possible next steps
 - Optionally give the **trainer** the member-style day-filtered log screen too (currently trainer sees the full form).
-- "Reset member password" button for the trainer (no password reset flow exists yet).
 - Trim trailing `.0` on displayed weights.
 - Retire the old Planner entirely (now overlaps with Weekly Split).
 - Per-week split history / versioning (currently a single recurring split).

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Account · Gym Log{% endblock %}
+{% block content %}
+<h1>Account</h1>
+<p class="subtitle">{{ current_user.name }} · {{ current_user.email }}
+  <span class="badge {{ current_user.role.value }}">{{ current_user.role.value }}</span></p>
+
+{% if saved and saved != '1' %}<div class="alert">{{ saved }}</div>
+{% elif saved %}<div class="ok-flash">✓ Saved.</div>{% endif %}
+
+{% if current_user.role.value == 'trainer' and not current_user.recovery_email and not current_user.recovery_phone %}
+<div class="rolebanner trainer">
+  <span><strong>Add a recovery contact.</strong> Yours is the only trainer account — if you lose the
+    password there is no self-service way back in. Recording a contact here means a manual
+    recovery has somewhere to start.</span>
+</div>
+{% endif %}
+
+<div class="panel" style="max-width:480px;margin-bottom:20px">
+  <strong style="font-size:14px">Recovery contact</strong>
+  <p class="muted" style="margin:6px 0 12px;font-size:13px">
+    Not used to send anything today — stored so account recovery has a known contact.
+  </p>
+  <form method="post" action="/account">
+    <div class="field">
+      <label for="recovery_email">Recovery email</label>
+      <input id="recovery_email" type="email" name="recovery_email"
+             value="{{ current_user.recovery_email or '' }}" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label for="recovery_phone">Recovery phone</label>
+      <input id="recovery_phone" type="tel" name="recovery_phone"
+             value="{{ current_user.recovery_phone or '' }}" placeholder="+91…">
+    </div>
+    <button type="submit">Save</button>
+  </form>
+</div>
+
+<div class="panel" style="max-width:480px">
+  <strong style="font-size:14px">Password</strong>
+  <p class="muted" style="margin:6px 0 12px;font-size:13px">
+    Changing it signs you out everywhere.
+  </p>
+  <a class="btn ghost" href="/account/password">Change password</a>
+</div>
+{% endblock %}

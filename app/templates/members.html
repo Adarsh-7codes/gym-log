@@ -48,12 +48,12 @@
       <tr>
         <td data-label="Name">{{ row.user.name }}</td>
         <td data-label="Email" class="muted">{{ row.user.email }}</td>
-        <td data-label="Role"><span class="badge {{ row.user.role.value }}">{{ row.user.role.value }}</span></td>
+        <td data-label="Role"><span class="badge {{ row.user.role.value }}">{{ row.user.role.value }}</span>{% if row.user.is_archived %} <span class="badge" style="background:#6b7280;color:#fff">archived</span>{% endif %}</td>
         <td data-label="Logs">{{ row.log_count }}</td>
         <td data-label="Last logged">{% if row.last_date %}{{ row.last_date.isoformat() }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="actions" style="text-align:right;white-space:nowrap">
           <a class="btn ghost" href="/dashboard?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">View logs</a>
-          {% if row.user.role.value == 'member' %}
+          {% if row.user.role.value == 'member' and not row.user.is_archived %}
           <details class="resetpw">
             <summary class="btn ghost" style="padding:6px 12px;font-size:13px">Reset password</summary>
             <form method="post" action="/members/{{ row.user.id }}/password" class="resetpw-form"
@@ -67,18 +67,23 @@
           {% endif %}
           <a class="btn ghost" href="/progress?user_id={{ row.user.id }}" style="padding:6px 12px;font-size:13px">Progress</a>
           {% if row.user.role.value == 'member' %}
-          <details class="resetpw">
-            <summary class="btn danger" style="padding:6px 12px;font-size:13px">Delete</summary>
-            <form method="post" action="/members/{{ row.user.id }}/delete" class="resetpw-form">
-              <label>This permanently deletes <strong>{{ row.user.name }}</strong> and
-                <strong>all</strong> their logs, attendance, memberships, routines and targets.
-                It cannot be undone.<br><br>
-                Type <strong>{{ row.user.name }}</strong> to confirm:</label>
-              <input type="text" name="confirm_name" required autocomplete="off"
-                     placeholder="{{ row.user.name }}">
-              <button type="submit" class="btn danger" style="width:100%">Delete permanently</button>
+            {% if not row.user.is_archived %}
+            <details class="resetpw">
+              <summary class="btn danger" style="padding:6px 12px;font-size:13px">Archive</summary>
+              <form method="post" action="/members/{{ row.user.id }}/archive" class="resetpw-form"
+                    onsubmit="return confirm('Archive {{ row.user.name }}? They will be signed out and hidden from the roster, but all their history is kept and you can restore them anytime.')">
+                <label>Archiving <strong>{{ row.user.name }}</strong> deactivates their login and
+                  removes them from the roster and attendance. Nothing is deleted — you can
+                  <strong>restore</strong> them later with all their history intact.</label>
+                <button type="submit" class="btn danger" style="width:100%">Archive member</button>
+              </form>
+            </details>
+            {% else %}
+            <form method="post" action="/members/{{ row.user.id }}/restore" style="display:inline"
+                  onsubmit="return confirm('Restore {{ row.user.name }}? They will be able to sign in again.')">
+              <button type="submit" class="btn ghost" style="padding:6px 12px;font-size:13px">Restore</button>
             </form>
-          </details>
+            {% endif %}
           {% endif %}
         </td>
       </tr>

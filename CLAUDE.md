@@ -43,7 +43,7 @@ These are load-bearing. Breaking one is how this codebase would rot.
 ## Before you commit
 
 ```bash
-python -m pytest          # 84 tests, ~2–3 minutes. Must be green.
+python -m pytest          # 92 tests, ~2–3 minutes. Must be green.
 ```
 
 Tests live in `tests/`; see `tests/README.md`. Some of them exist to keep a

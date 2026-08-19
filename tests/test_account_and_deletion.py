@@ -15,7 +15,14 @@ from urllib.parse import unquote_plus
 
 from sqlalchemy import select
 
-from conftest import TRAINER, add_member, login, logout, register_trainer
+from conftest import (
+    TRAINER,
+    add_member,
+    login,
+    logout,
+    register_trainer,
+    user_id_by_email,
+)
 
 
 def _flash(response):
@@ -173,3 +180,181 @@ def test_a_member_can_edit_their_own_details_only(client):
     assert _name_and_role("mo2@example.com") == ("Mo Renamed", "member")
     assert _name_and_role("sam@example.com")[0] == "Sam Member"
     assert _name_and_role(TRAINER["email"])[0] == TRAINER["name"]
+
+
+# ======================================================================
+# Phase 2 — archive / deactivate a member (the reversible default)
+#
+# Archiving is a soft "they left the gym": the member disappears from the
+# active screens and cannot sign in, but nothing is deleted and a restore
+# brings them fully back. Permanent deletion is a separate, harder step that
+# now requires the member to be archived first (tested here; the full cascade
+# is Phase 3). Each test below pins one promise; a red one means the archive
+# boundary leaks -- either an archived member is still visible/loggable, or an
+# archive was destructive, or the two-step delete guard is gone.
+# ======================================================================
+
+
+def _is_archived(email):
+    """Whether an account is archived, via a fresh session."""
+    from app.database import SessionLocal
+    from app.models import User
+
+    with SessionLocal() as s:
+        u = s.scalar(select(User).where(User.email == email))
+        return u.is_archived if u else None
+
+
+def test_archiving_hides_the_member_from_active_screens_but_keeps_the_account(client):
+    """The core promise: after archiving, the member is gone from the roster,
+    the attendance screen and the trainer's log picker -- but the account still
+    exists (archived, not deleted). If this fails, either archiving didn't hide
+    them (defeating the feature) or it destroyed data (it must not)."""
+    register_trainer(client)
+    add_member(client, name="Zoltan Hidden", email="zoltan@example.com")
+    mid = user_id_by_email("zoltan@example.com")
+
+    # Visible on every active screen while active.
+    assert "Zoltan Hidden" in client.get("/dashboard").text
+    assert "Zoltan Hidden" in client.get("/today").text
+    assert "Zoltan Hidden" in client.get("/logs/new").text
+
+    r = client.post(f"/members/{mid}/archive", follow_redirects=False)
+    assert r.status_code == 303 and "reset_ok" in r.headers["location"]
+
+    # Gone from all three active screens...
+    assert "Zoltan Hidden" not in client.get("/dashboard").text
+    assert "Zoltan Hidden" not in client.get("/today").text
+    assert "Zoltan Hidden" not in client.get("/logs/new").text
+    # ...but the account is kept, merely flagged archived.
+    assert _is_archived("zoltan@example.com") is True
+
+
+def test_an_archived_member_cannot_log_in_while_an_active_one_still_can(client):
+    """Archiving deactivates the login. A red test means a member who 'left' can
+    still get in -- or, worse, that active members were locked out too."""
+    register_trainer(client)
+    add_member(client, name="Gone Away", email="gone@example.com")
+    add_member(client, name="Still Here", email="here@example.com")
+    logout(client)
+
+    # The trainer must archive, so sign back in as trainer to do it.
+    login(client, TRAINER["email"], TRAINER["password"], role="trainer")
+    client.post(f"/members/{user_id_by_email('gone@example.com')}/archive")
+    logout(client)
+
+    r = login(client, "gone@example.com", "pw123456")
+    assert r.headers["location"].startswith("/login")
+    assert "deactivated" in unquote_plus(r.headers["location"]).lower()
+
+    # The other member is unaffected.
+    assert login(client, "here@example.com", "pw123456").headers["location"] == "/dashboard"
+
+
+def test_archiving_signs_the_member_out_of_a_live_session(client):
+    """Archiving bumps token_version, so a member already signed in is kicked out
+    at their next request rather than lingering until the token expires. If this
+    fails, an archived member keeps a working session for up to a week."""
+    register_trainer(client)  # trainer session lives in `client`
+    add_member(client, name="Zed Session", email="zed@example.com")
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    member = TestClient(app)  # a separate session (cookie jar) for the member
+    assert login(member, "zed@example.com", "pw123456").headers["location"] == "/dashboard"
+    assert member.get("/dashboard", follow_redirects=False).status_code == 200
+
+    client.post(f"/members/{user_id_by_email('zed@example.com')}/archive")
+
+    # The member's still-held cookie is now stale -> bounced to login.
+    r = member.get("/dashboard", follow_redirects=False)
+    assert r.status_code in (302, 303, 307)
+    assert "/login" in r.headers["location"]
+
+
+def test_restoring_a_member_brings_them_back_and_lets_them_log_in(client):
+    """Restore is the whole point of archiving over deleting. After it, the
+    member reappears on the roster and can sign in again with their old
+    password (archive never touched it)."""
+    register_trainer(client)
+    add_member(client, name="Come Back", email="back@example.com")
+    mid = user_id_by_email("back@example.com")
+
+    client.post(f"/members/{mid}/archive")
+    assert "Come Back" not in client.get("/dashboard").text
+
+    r = client.post(f"/members/{mid}/restore", follow_redirects=False)
+    assert r.status_code == 303 and "reset_ok" in r.headers["location"]
+    assert "Come Back" in client.get("/dashboard").text
+    assert _is_archived("back@example.com") is False
+
+    logout(client)
+    assert login(client, "back@example.com", "pw123456").headers["location"] == "/dashboard"
+
+
+def test_the_trainer_cannot_be_archived(client):
+    """The archive route is member-only. Archiving the sole trainer would lock
+    the whole app; this guards against it. The trainer stays active and can log
+    in afterwards."""
+    register_trainer(client)
+    tid = user_id_by_email(TRAINER["email"])
+
+    r = client.post(f"/members/{tid}/archive", follow_redirects=False)
+    assert r.status_code == 303 and "reset_error" in r.headers["location"]
+    assert _is_archived(TRAINER["email"]) is False
+
+    logout(client)
+    assert login(client, TRAINER["email"], TRAINER["password"],
+                 role="trainer").headers["location"] == "/dashboard"
+
+
+def test_a_member_cannot_archive_anyone(client):
+    """Archiving is a trainer power (require_trainer_web -> 403 for members).
+    A red test means a member could deactivate another member's account."""
+    register_trainer(client)
+    add_member(client, name="Victim", email="victim@example.com")
+    add_member(client, name="Attacker", email="attacker@example.com")
+    vid = user_id_by_email("victim@example.com")
+
+    logout(client)
+    login(client, "attacker@example.com", "pw123456")
+    r = client.post(f"/members/{vid}/archive", follow_redirects=False)
+    assert r.status_code == 403
+    assert _is_archived("victim@example.com") is False
+
+
+def test_permanent_delete_requires_archiving_first(client):
+    """Two-step deletion: an ACTIVE member cannot be permanently deleted. The
+    irreversible action is only reachable after archiving. If this fails, the
+    one-tap permanent delete we deliberately removed has crept back."""
+    register_trainer(client)
+    add_member(client, name="Delete Me", email="del@example.com")
+    mid = user_id_by_email("del@example.com")
+
+    # Correct name typed, but the member is not archived -> refused.
+    r = client.post(f"/members/{mid}/delete",
+                    data={"confirm_name": "Delete Me"}, follow_redirects=False)
+    assert r.status_code == 303 and "reset_error" in r.headers["location"]
+    assert "archive" in unquote_plus(r.headers["location"]).lower()
+
+    # The account is untouched.
+    assert user_id_by_email("del@example.com") == mid
+
+
+def test_members_page_shows_archive_for_active_and_restore_for_archived(client):
+    """The members page is where the whole Phase 2 UI lives -- an active member
+    offers Archive, an archived one offers Restore and is badged. This also
+    guards the template itself against a rendering error (a GET that 500s here
+    would fail this test)."""
+    register_trainer(client)
+    add_member(client, name="Active Amy", email="amy@example.com")
+    add_member(client, name="Archived Al", email="al@example.com")
+    client.post(f"/members/{user_id_by_email('al@example.com')}/archive")
+
+    page = client.get("/members")
+    assert page.status_code == 200
+    # Active member: an Archive form; archived member: a Restore form + badge.
+    assert f"/members/{user_id_by_email('amy@example.com')}/archive" in page.text
+    assert f"/members/{user_id_by_email('al@example.com')}/restore" in page.text
+    assert ">archived<" in page.text

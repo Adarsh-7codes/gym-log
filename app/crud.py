@@ -1,5 +1,5 @@
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote_plus
@@ -417,6 +417,31 @@ def update_profile(db: Session, user: User, *, name: str, email: str) -> None:
     db.commit()
 
 
+def archive_member(db: Session, member: User) -> None:
+    """Deactivate a member who has left the gym, reversibly.
+
+    Sets ``archived_at`` (which hides them from active listings and blocks
+    login) and bumps ``token_version`` so any session they still have open is
+    invalidated at once -- an archived member should not stay signed in. Every
+    row of their history is left untouched; ``restore_member`` undoes this.
+    """
+    if member.role != Role.member:
+        raise Forbidden("Only member accounts can be archived")
+    if member.is_archived:
+        return  # idempotent: archiving an archived member is a no-op
+    member.archived_at = datetime.now(timezone.utc)
+    member.token_version = int(member.token_version or 0) + 1
+    db.commit()
+
+
+def restore_member(db: Session, member: User) -> None:
+    """Reactivate an archived member -- they reappear and can log in again."""
+    if member.role != Role.member:
+        raise Forbidden("Only member accounts can be restored")
+    member.archived_at = None
+    db.commit()
+
+
 def delete_member(db: Session, member: User) -> None:
     """Permanently remove a member and everything belonging to them.
 
@@ -424,9 +449,15 @@ def delete_member(db: Session, member: User) -> None:
     CASCADE: SQLite does not enforce foreign keys unless the pragma is on, so
     relying on the database would quietly behave differently locally and in
     production. Explicit is identical on both.
+
+    Two-step by design: a member must be **archived** before they can be
+    permanently deleted, so the irreversible action is always a deliberate
+    second step rather than one tap away from an active member.
     """
     if member.role != Role.member:
         raise Forbidden("Only member accounts can be deleted")
+    if not member.is_archived:
+        raise Forbidden("Archive the member before deleting them permanently")
 
     uid = member.id
     # Children first, then rows that merely reference the user.
@@ -1020,7 +1051,11 @@ def member_roster(db: Session, sort: str = "default") -> list:
     """All members with status; dues/expiry/flags surfaced first by default."""
     if sort not in ROSTER_SORTS:
         sort = "default"
-    members = db.scalars(select(User).where(User.role == Role.member).order_by(User.name)).all()
+    members = db.scalars(
+        select(User)
+        .where(User.role == Role.member, User.archived_at.is_(None))
+        .order_by(User.name)
+    ).all()
     statuses = [member_status(db, m) for m in members]
     statuses.sort(key=lambda s: _roster_sort_key(s, sort))
     return statuses

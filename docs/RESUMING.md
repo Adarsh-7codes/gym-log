@@ -81,6 +81,11 @@ That path touches almost every feature in the app.
   role stays `trainer`. Do this on the **live** site to rename the demo account —
   local and live are separate databases. To change the *password*, use
   **Account → change password** (Phase 0.5), which signs you out everywhere.
+- **Removing a member is two steps, on purpose.** **Members → Archive** first —
+  that deactivates their login and hides them from the roster/attendance but
+  keeps all their history, and you can **Restore** them anytime. Only an
+  *archived* member can then be permanently deleted (a separate, name-typed
+  confirm). Archive is reversible; delete is not.
 
 ## 6. Check the live deployment
 

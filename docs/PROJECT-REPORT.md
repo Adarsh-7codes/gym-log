@@ -49,6 +49,115 @@ grows:
 
 <!-- Newest phase entries are added directly below this line. -->
 
+# Phase 2 — Archive / deactivate a member (the reversible default)
+
+*Status: **done**, tests green. Committed on the branch.*
+
+## What & why
+
+The user asked to "be able to delete members." Rather than jump straight to an
+irreversible delete, we agreed on **"Both"**, with **archive as the default**:
+
+- **Archive** = a soft "they left the gym". The member disappears from the
+  active screens and can no longer sign in, but **nothing is deleted** and a
+  one-click **Restore** brings them fully back.
+- **Permanent delete** stays available but is now a deliberate **second step**:
+  a member must be archived *first* (see the guard below). The full permanent
+  delete + its cascade tests are Phase 3.
+
+**Why archive-first (the decision):** deletion here is irreversible and wipes a
+member's whole history. A gym member who quits and rejoins months later is
+common; archiving keeps their logs, attendance and membership record so they
+resume instead of starting from zero. Making delete a second step means the
+irreversible action can never be one accidental tap away from an active member.
+*(The alternative — showing Archive and Delete side by side on an active member
+— was rejected for exactly that reason.)*
+
+## Files touched
+
+- `app/models.py` — `User.archived_at` (nullable) + `User.is_archived` property.
+- `app/database.py` — idempotent `ALTER TABLE users ADD COLUMN archived_at`
+  (extend-only; every existing account stays active on upgrade).
+- `app/crud.py` — `archive_member()` (sets the flag **and bumps
+  `token_version`** to kill any live session), `restore_member()`, an
+  `archived_at IS NULL` filter on `member_roster`, and a new guard in
+  `delete_member()` refusing to delete a member who isn't archived.
+- `app/routers/web.py` — login block for archived members; archived excluded
+  from the `/today` attendance list and from **all four** trainer member-pickers
+  (dashboard, log form, planner, progress); new `POST /members/{id}/archive` and
+  `/restore` routes; `members_page` sorts archived to the bottom; the delete
+  route now refuses a non-archived member with a clear message.
+- `app/templates/members.html` — active member → **Archive**; archived member →
+  **Restore** + an "archived" badge; the old one-tap **Delete** control removed.
+- Tests, `docs/CLAUDE.md`, `docs/RESUMING.md`, `README.md` — below / as noted.
+
+### The subtle part: where "a member" is listed
+
+The real work was finding **every** place the app enumerates members, so an
+archived one leaks nowhere. There were **six**: the roster (`member_roster`),
+the attendance screen, and four separate "log on behalf / pick a member"
+selectors. Missing any one would show a ghost. A grep for `select(User)` and
+`Role.member` across `crud.py` and `web.py` was used to be sure the list was
+complete. The **members page itself deliberately still lists archived members**
+— that is where you restore them.
+
+## Tests — what each one guards, and what a failure would mean
+
+Added to `tests/test_account_and_deletion.py` (8 new, 15 total in the file):
+
+1. **`…hides_the_member_from_active_screens_but_keeps_the_account`** — the core
+   promise: gone from roster + attendance + log picker, yet the account still
+   exists (archived, not deleted). *Red would mean:* archiving either failed to
+   hide them or destroyed data.
+2. **`…cannot_log_in_while_an_active_one_still_can`** — archived login is
+   blocked with a "deactivated" message; a different active member is
+   unaffected. *Red would mean:* a member who "left" can still get in, or active
+   members were locked out too.
+3. **`…signs_the_member_out_of_a_live_session`** — uses a second client to hold
+   the member's session, archives them, and asserts their held cookie is now
+   stale. *Red would mean:* the `token_version` bump was dropped and an archived
+   member keeps a working session for up to a week.
+4. **`…restoring…brings_them_back_and_lets_them_log_in`** — restore returns them
+   to the roster and lets them sign in with the untouched password. *Red would
+   mean:* archive is effectively one-way, defeating the whole point.
+5. **`…the_trainer_cannot_be_archived`** — archiving the sole trainer would lock
+   the app; the route is member-only. *Red would mean:* a lockout footgun.
+6. **`…a_member_cannot_archive_anyone`** — 403 for members
+   (`require_trainer_web`). *Red would mean:* a member could deactivate another.
+7. **`…permanent_delete_requires_archiving_first`** — deleting an *active*
+   member is refused. *Red would mean:* the one-tap permanent delete we removed
+   has crept back.
+8. **`…members_page_shows_archive_for_active_and_restore_for_archived`** — also
+   guards `members.html` against a render error (a 500 on that GET fails it).
+
+## Failures & fixes
+
+**None.** All 8 new tests passed on the first run; the full suite went **84 →
+92 passed** with no regressions. One thing that could have bitten and didn't:
+the trainer member-picker in `new_log_page` uses a slightly different query
+shape (no `if is_trainer else []` suffix), so the bulk find/replace that fixed
+the other three pickers skipped it — it was caught by re-grepping `select(User)`
+rather than trusting the replace, and fixed before running tests.
+
+## How to use it
+
+As the trainer, on the **Members** page:
+
+- **Archive** a member: their **Archive** control → confirm. They're signed out,
+  drop off the roster/attendance, and can't log in. Nothing is deleted.
+- **Restore**: archived members sit at the bottom of the list with a **Restore**
+  button — one click and they're back, history intact.
+- Archived members can still be opened (**View logs / Progress**) so you can
+  look before restoring or (Phase 3) deleting.
+
+## Result
+
+`python -m pytest` → **92 passed** (was 84), ~2m, exit 0. Verified via the test
+suite rendering the real templates; the dev server was intentionally not run
+against the local `gym.db` to avoid leaving throwaway accounts in real data.
+
+---
+
 # Phase 1 — Trainer/member profile editing (name + login email)
 
 *Status: **done**, tests green. Committed on the branch.*

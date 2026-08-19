@@ -43,6 +43,9 @@ points for each member.
   total lockout
 - **Edit your own account** — any user can change their own name and login email
   from **Account → Your details** (turns the seeded demo trainer into a real one)
+- **Archive / restore members** — a member who leaves can be archived
+  (deactivated, hidden, but history kept and reversible); permanent deletion is a
+  deliberate second step available only after archiving
 
 ## Running it locally
 

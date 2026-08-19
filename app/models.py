@@ -69,6 +69,15 @@ class User(Base):
     # known contact, and so an emailed reset can be added without a migration.
     recovery_email = Column(String(255), nullable=True)
     recovery_phone = Column(String(40), nullable=True)
+    # Archive/deactivate a member who has left the gym. NULL = active; a
+    # timestamp = archived: hidden from active listings, blocked from logging
+    # in, but every row of their history is kept and a restore is one click.
+    # Permanent deletion is a separate, harder-guarded step (archive first).
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
 
     logs = relationship("Log", back_populates="user", cascade="all, delete-orphan")
     memberships = relationship(

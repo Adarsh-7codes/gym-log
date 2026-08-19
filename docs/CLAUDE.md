@@ -48,7 +48,7 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - Trainer = gold theme; member = blue theme. Badge shown under the name; "Trainer view / Member view" banner on the dashboard.
 
 ## 7. Data model (SQLAlchemy — `app/models.py`)
-- `User(id, name, email, password_hash, role[trainer|member], created_at, token_version, recovery_email, recovery_phone)` — **Phase 0.5** added the last three. `token_version` is bumped on every password change and carried as the `tv` JWT claim, so a reset invalidates live sessions instead of leaving a stale token valid for its full 7 days.
+- `User(id, name, email, password_hash, role[trainer|member], created_at, token_version, recovery_email, recovery_phone, archived_at)` — **Phase 0.5** added token_version + the two recovery fields. `token_version` is bumped on every password change (and on archive) and carried as the `tv` JWT claim, so a reset invalidates live sessions instead of leaving a stale token valid for its full 7 days. `archived_at` (nullable) is the **archive/deactivate** flag: NULL = active, a timestamp = archived — hidden from active listings and blocked from login, but never deleted and reversible via restore. `User.is_archived` is the derived boolean.
 - `Exercise(id, name, body_part[chest/back/legs/shoulders/arms/core], difficulty[beginner/intermediate/advanced], equipment, instructions, demo_url)` — the **Exercise Library**, seeded on startup (48 exercises, ~8/body-part across difficulties, in `app/seed.py`).
 - `MemberRoutine(user_id, exercise_id, body_part, date_added, assigned_by[member|trainer])` — a member's standing list of exercises per body part. Removing a row does **not** delete logs. `assigned_by` (**Phase 2**) records who prescribed it; pre-existing rows backfilled to `member`.
 - `SplitDay(user_id, weekday 0–6, body_part)` — the **Weekly Split**: multiple rows per weekday allowed (e.g. Mon = chest AND arms).
@@ -94,6 +94,8 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 - `/members/{user_id}/weight` POST, `/weight/{id}/delete` POST (trainer).
 - `/members/{user_id}/targets` POST, `/targets/{id}/delete` POST (trainer).
 - `/members/{user_id}/password` POST (trainer): reset a member's password.
+- `/members/{user_id}/archive` POST, `/members/{user_id}/restore` POST (trainer): **archive/deactivate** a member (reversible) via `crud.archive_member()` / `crud.restore_member()`. Archive sets `archived_at`, bumps `token_version` (kills any live session), and hides them from the roster, attendance and all member-pickers; restore clears it. Members-only (never the trainer). Archived members remain listed on `/members` so they can be restored or deleted.
+- `/members/{user_id}/delete` POST (trainer): **permanent** delete via `crud.delete_member()` — **two-step by design**: refuses unless the member is already **archived**, then requires the member's name typed exactly. Removes every dependent row explicitly (not via CASCADE — SQLite doesn't enforce FKs), and nulls (not deletes) any `PasswordChange` the member authored for someone else. Full cascade coverage is Phase 3.
 - `/account`, `/account/password` (any role): recovery contacts and self-service change.
 - `/account/profile` POST (any role): change your own **name + login email** via `crud.update_profile()` — validates non-blank, reuses the app's email validation, rejects an email already used by another account, and **does not touch the role**. This is how the seeded demo trainer becomes a real account. Session survives the change (the JWT subject is the user id, not the email).
 - `/exercises` (trainer): manage the raw exercise list.
@@ -119,7 +121,7 @@ python scripts/set_password.py --email <email> --password <new_password>
 Reads `DATABASE_URL` exactly like the app (including the `postgres://` rewrite); with none set it operates on local SQLite. For the **live** database use Render → gymlog → **Shell**, where `DATABASE_URL` is already set — nothing to paste and no credential to leak. Uses the app's own hashing so it can never drift, never prints the password, and masks remote credentials in its output.
 
 ## 11. Conventions / gotchas
-- **Tests live in `tests/` and are run with `pytest`** (84 tests, ~2–3 min). `pip install -r requirements-dev.txt` then `python -m pytest`. Each test gets a throwaway SQLite database and never touches `gym.db`. See `tests/README.md`.
+- **Tests live in `tests/` and are run with `pytest`** (92 tests, ~2–3 min). `pip install -r requirements-dev.txt` then `python -m pytest`. Each test gets a throwaway SQLite database and never touches `gym.db`. See `tests/README.md`.
 - **Schema changes are extend-only:** new columns added idempotently in `app/database.py::ensure_schema()` (runs on startup). Each block guards its own table independently — a missing table must never skip the others' migrations. New tables handled by `create_all`. Exercise library re-seeded on every startup (idempotent by name).
 - Fresh Postgres on Render auto-creates all tables + seeds on first boot — no manual migration.
 - Passwords never retrievable (bcrypt one-way). To *know* a member's password, the trainer sets it via Members → Add member.

@@ -148,6 +148,11 @@ def login_submit(
         _record_login_failure(key)
         return bounce("Login failed — check that you've selected the correct role above.", role)
 
+    # Archived (deactivated) members cannot sign in. Not a credential failure,
+    # so it doesn't count toward the throttle -- it just stops here.
+    if user.is_archived:
+        return bounce("This account has been deactivated. Please contact your trainer.")
+
     _login_failures.pop(key, None)
     response = RedirectResponse(url=_safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
     _set_auth_cookie(response, user)
@@ -281,7 +286,9 @@ def dashboard(
         start_date=start,
         end_date=end,
     )
-    members = db.scalars(select(User).order_by(User.name)).all() if is_trainer else []
+    members = db.scalars(
+        select(User).where(User.archived_at.is_(None)).order_by(User.name)
+    ).all() if is_trainer else []
     exercises = db.scalars(select(Exercise).order_by(Exercise.name)).all()
     # Whose data are we viewing? (self for a member, the selected member for a trainer)
     viewed_user_id = user_id if (is_trainer and user_id) else current_user.id
@@ -386,7 +393,10 @@ def new_log_page(
         )
 
     # Trainers get the full form (they log on behalf of a member, all fields).
-    members = db.scalars(select(User).order_by(User.name)).all()
+    # Active accounts only -- you can't log for an archived member.
+    members = db.scalars(
+        select(User).where(User.archived_at.is_(None)).order_by(User.name)
+    ).all()
     return templates.TemplateResponse(
         "log_form.html",
         {
@@ -940,6 +950,44 @@ def account_save(
     return RedirectResponse(url="/account?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/members/{user_id}/archive")
+def member_archive(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    """Deactivate a member (reversible). They vanish from active listings and
+    can no longer sign in, but all their history is kept for a later restore."""
+    target = db.get(User, user_id)
+    if target is None or target.role != Role.member:
+        return RedirectResponse(url="/members?reset_error=" + quote_plus("Member not found"),
+                                status_code=status.HTTP_303_SEE_OTHER)
+    crud.archive_member(db, target)
+    return RedirectResponse(
+        url="/members?reset_ok=" + quote_plus(
+            f"{target.name} was archived. They can be restored anytime."),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/members/{user_id}/restore")
+def member_restore(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _trainer: User = Depends(require_trainer_web),
+):
+    """Reactivate an archived member -- they reappear and can log in again."""
+    target = db.get(User, user_id)
+    if target is None or target.role != Role.member:
+        return RedirectResponse(url="/members?reset_error=" + quote_plus("Member not found"),
+                                status_code=status.HTTP_303_SEE_OTHER)
+    crud.restore_member(db, target)
+    return RedirectResponse(
+        url="/members?reset_ok=" + quote_plus(f"{target.name} was restored."),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @router.post("/members/{user_id}/delete")
 def member_delete(
     user_id: int,
@@ -949,13 +997,20 @@ def member_delete(
 ):
     """Permanently remove a member and all of their data.
 
-    Guarded twice: only member accounts can be deleted (never the trainer,
-    never yourself), and the typed name must match.
+    Guarded three ways: only member accounts (never the trainer), the member
+    must already be **archived** (delete is a deliberate second step), and the
+    typed name must match.
     """
     target = db.get(User, user_id)
     if target is None or target.role != Role.member:
         return RedirectResponse(url="/members?reset_error=" + quote_plus("Member not found"),
                                 status_code=status.HTTP_303_SEE_OTHER)
+    if not target.is_archived:
+        return RedirectResponse(
+            url="/members?reset_error=" + quote_plus(
+                "Archive the member first, then delete them permanently."),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     if confirm_name.strip().lower() != target.name.strip().lower():
         return RedirectResponse(
             url="/members?reset_error=" + quote_plus(
@@ -1061,7 +1116,11 @@ def today_page(
         day = _opt_date(on) or date.today()
     except ValueError:
         day = date.today()
-    members = db.scalars(select(User).where(User.role == Role.member).order_by(User.name)).all()
+    members = db.scalars(
+        select(User)
+        .where(User.role == Role.member, User.archived_at.is_(None))
+        .order_by(User.name)
+    ).all()
     present = crud.attended_on(db, day)
     counts = crud.attendance_counts_this_month(db)
     rows = [
@@ -1196,6 +1255,8 @@ def members_page(
         }
         for u in users
     ]
+    # Archived members sink to the bottom so the active roster reads first.
+    rows.sort(key=lambda r: (r["user"].is_archived, r["user"].name.lower()))
     return templates.TemplateResponse(
         "members.html",
         {"request": request, "current_user": current_user, "rows": rows, "error": error, "reset_ok": reset_ok, "reset_error": reset_error},
@@ -1254,7 +1315,9 @@ def planner_page(
         for i in range(7)
     ]
     exercises = db.scalars(select(Exercise).order_by(Exercise.name)).all()
-    members = db.scalars(select(User).order_by(User.name)).all() if is_trainer else []
+    members = db.scalars(
+        select(User).where(User.archived_at.is_(None)).order_by(User.name)
+    ).all() if is_trainer else []
     return templates.TemplateResponse(
         "planner.html",
         {
@@ -1412,7 +1475,9 @@ def progress_page(
     target_user_id = user_id if (is_trainer and user_id) else current_user.id
 
     exercises = db.scalars(select(Exercise).order_by(Exercise.name)).all()
-    members = db.scalars(select(User).order_by(User.name)).all() if is_trainer else []
+    members = db.scalars(
+        select(User).where(User.archived_at.is_(None)).order_by(User.name)
+    ).all() if is_trainer else []
 
     series: list[tuple[date, float]] = []
     if exercise_id:

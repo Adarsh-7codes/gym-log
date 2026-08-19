@@ -45,6 +45,9 @@ def ensure_schema() -> None:
         for col, ddl in (
             ("recovery_email", "ALTER TABLE users ADD COLUMN recovery_email VARCHAR(255)"),
             ("recovery_phone", "ALTER TABLE users ADD COLUMN recovery_phone VARCHAR(40)"),
+            # Archive/deactivate: NULL = active, a timestamp = archived. Nullable
+            # with no default, so every existing account stays active on upgrade.
+            ("archived_at", "ALTER TABLE users ADD COLUMN archived_at TIMESTAMP"),
         ):
             if col not in user_cols:
                 with engine.begin() as conn:

@@ -37,8 +37,19 @@ from sqlalchemy import select  # noqa: E402
 
 from app import crud  # noqa: E402
 from app.config import settings  # noqa: E402
-from app.database import SessionLocal  # noqa: E402
+from app.database import Base, SessionLocal, engine, ensure_schema  # noqa: E402
 from app.models import PasswordChangeMethod, User  # noqa: E402
+
+
+def prepare_schema() -> None:
+    """Bring the database up to date before touching it.
+
+    The web app does this on startup, but this script may well be the first
+    thing to open a database after an upgrade -- and it is the tool you reach
+    for when you are already locked out. It must not be the thing that fails.
+    """
+    Base.metadata.create_all(bind=engine)
+    ensure_schema()
 
 
 def describe_target() -> str:
@@ -72,6 +83,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print(f"Database: {describe_target()}")
+    prepare_schema()
 
     with SessionLocal() as db:
         if args.list:

@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import func, inspect, select, text  # noqa: E402
 
 from app.config import settings  # noqa: E402
-from app.database import SessionLocal, engine  # noqa: E402
+from app.database import Base, SessionLocal, engine, ensure_schema  # noqa: E402
 from app.models import Exercise, User  # noqa: E402
 
 # Children before parents so this works with or without ON DELETE CASCADE.
@@ -67,6 +67,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Reset GymLog demo data.")
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     args = parser.parse_args()
+
+    # This script may be the first thing to open a database after an upgrade,
+    # so bring the schema up to date before querying it.
+    Base.metadata.create_all(bind=engine)
+    ensure_schema()
 
     target = describe_target()
     with SessionLocal() as db:

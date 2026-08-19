@@ -114,3 +114,37 @@ def test_cli_change_is_audited_as_cli(client):
         assert row.method == PasswordChangeMethod.cli
         # Null changed_by is how "the CLI did it" is recorded.
         assert row.changed_by_user_id is None
+
+
+def test_cli_works_on_a_database_that_predates_the_latest_schema(client, tmp_path):
+    """The break-glass script must not be the thing that fails in an emergency.
+
+    Regression: it queried the User model directly without running migrations,
+    so on a database created before token_version existed it crashed with
+    "no such column: users.token_version" -- exactly when you are locked out
+    and need it most.
+    """
+    import sqlite3
+
+    old_db = tmp_path / "legacy.db"
+    con = sqlite3.connect(old_db)
+    con.executescript(
+        """
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY, name TEXT, email TEXT, password_hash TEXT,
+            role TEXT, created_at TEXT
+        );
+        INSERT INTO users VALUES (1,'Old Trainer','old@example.com','x','trainer',NULL);
+        """
+    )
+    con.commit()
+    con.close()
+
+    url = f"sqlite:///{old_db.as_posix()}"
+    listing = run_cli(url, "--list")
+    assert listing.returncode == 0, listing.stderr
+    assert "old@example.com" in listing.stdout
+
+    changed = run_cli(url, "--email", "old@example.com", "--password", "recovered123")
+    assert changed.returncode == 0, changed.stderr
+    assert "Old Trainer" in changed.stdout

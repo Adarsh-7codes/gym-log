@@ -49,6 +49,109 @@ grows:
 
 <!-- Newest phase entries are added directly below this line. -->
 
+# Phase 3 — Permanent deletion (the irreversible second step)
+
+*Status: **done**, tests green. Committed on the branch.*
+
+## What & why
+
+The other half of "Both": once a member is **archived**, the trainer can delete
+them **permanently**. This finishes the two-step flow — archive is reversible,
+delete is not, and delete is only reachable from an already-archived member.
+
+The delete *route* and `crud.delete_member` already existed (and Phase 2 added
+the archive-first guard). Phase 3 added the three things that were missing:
+
+1. the **"Delete forever"** control on archived rows (name-typed confirm);
+2. a refactor so the list of tables a delete touches is a **single named
+   constant**, `crud.USER_OWNED_MODELS`; and
+3. the **serious test suite** the handoff insisted on before this could merge —
+   most importantly the *orphan-trap guard*.
+
+**Why the constant + the guard (the important idea):** deleting a member means
+deleting rows from nine different tables by hand (we don't use `ON DELETE
+CASCADE` — SQLite doesn't enforce FKs without a pragma, so leaning on the DB
+would behave differently locally vs. on Postgres). The danger is the **future**:
+someone adds a tenth user-owned table a year from now and forgets to delete from
+it, so every deletion silently leaves orphaned rows. `USER_OWNED_MODELS` makes
+the list explicit in one place, and the orphan-trap test reflects the schema and
+**fails the build** if any table with a `user_id` column is missing from it. The
+omission gets caught in CI, never in real data.
+
+## Files touched
+
+- `app/crud.py` — new `USER_OWNED_MODELS` tuple (the nine user-owned tables);
+  `delete_member` rewritten to loop over it instead of an inline list.
+- `app/templates/members.html` — **Delete forever** control on archived rows
+  (permanent, name-typed confirm, spelled out as irreversible).
+- `tests/test_account_and_deletion.py` — 6 new tests (21 total in the file).
+- `docs/CLAUDE.md`, `README.md`, `docs/RESUMING.md` — deletion documented.
+
+## Tests — what each one guards, and what a failure would mean
+
+6 new (`tests/test_account_and_deletion.py`):
+
+1. **`…handles_every_table_that_references_a_user`** — the **orphan-trap guard**.
+   Reflects `Base.metadata` for every table with a `user_id` column and asserts
+   `crud.USER_OWNED_MODELS` covers them all. *Red would mean:* a user-owned table
+   is missing from the delete list and deletions are leaving orphans — the exact
+   trap the handoff wanted a test to catch.
+2. **`…wipes_all_their_data`** — seeds one row in all nine tables plus a
+   PlanItem, deletes, asserts the user and every row are gone (count 0 each).
+   *Red would mean:* deletion is incomplete.
+3. **`…leaves_other_members_data_intact`** — two members with identical
+   histories; deleting one must not touch the other. *Red would mean:* deletion
+   over-reaches across accounts — catastrophic on real data.
+4. **`…nulls_audit_rows_they_authored_for_others`** — a `PasswordChange` the
+   deleted member *authored* for another account survives with its author
+   nulled. *Red would mean:* deleting one member erases evidence from another's
+   history.
+5. **`…refuses_a_wrong_or_empty_confirmation_name`** — the typed name must match
+   exactly (tries wrong, empty, whitespace). *Red would mean:* the last guard
+   before an irreversible action is gone.
+6. **`…delete_control_is_shown_only_for_archived_members`** — the delete form
+   renders on an archived row and **not** an active one. *Red would mean:* the
+   one-tap delete we removed in Phase 2 has crept back into the UI.
+
+## Failures & fixes
+
+**One failure, in the test's own seed data — not the product.** On the first run,
+two tests errored with:
+
+```
+sqlalchemy.exc.IntegrityError: NOT NULL constraint failed: plan_items.exercise_id
+```
+
+- **Why it happened:** `_seed_full_history()` created a `PlanItem` with only a
+  `plan_day_id`, but `PlanItem.exercise_id` is `NOT NULL`. I had written the seed
+  from memory of the model instead of checking it.
+- **Why it was harmless:** it failed at **insert**, before `delete_member` ever
+  ran — so it proved the *seed* was wrong, not the deletion. `delete_member` was
+  never in question here.
+- **The fix:** read the `PlanItem` model, then pass the seeded exercise id
+  (`PlanItem(plan_day_id=pd.id, exercise_id=eid)`). Re-ran: green.
+- **Lesson worth keeping:** when a test builds rows directly, check each model's
+  NOT-NULL columns rather than trusting memory; the failure is loud but it costs
+  a round-trip. (The alternative — seeding through the app's routes — would have
+  dodged this but made the test far longer and less explicit about *which*
+  tables it covers.)
+
+After the fix: **92 → 98 passed**, no regressions.
+
+## How to use it
+
+On the **Members** page, an **archived** member's row now has **Delete forever**
+next to **Restore**. Opening it explains the deletion is permanent and asks you
+to type the member's name exactly. There is no way to delete an *active* member —
+you must archive first. Prefer **Restore** whenever there's any chance they
+return; delete only when you're certain.
+
+## Result
+
+`python -m pytest` → **98 passed** (was 92), ~2m, exit 0.
+
+---
+
 # Phase 2 — Archive / deactivate a member (the reversible default)
 
 *Status: **done**, tests green. Committed on the branch.*

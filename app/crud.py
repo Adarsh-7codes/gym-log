@@ -442,6 +442,25 @@ def restore_member(db: Session, member: User) -> None:
     db.commit()
 
 
+# Every table with a `user_id` column, i.e. every table whose rows are owned by
+# one user and must be removed when that user is deleted. PlanItem is
+# deliberately absent: it has no user_id and is cleared via its PlanDay parent
+# inside delete_member(). **If you add a table with a user_id, add it here** or
+# deleting a member will orphan its rows -- the reflection test in
+# tests/test_account_and_deletion.py fails loudly if this list falls behind.
+USER_OWNED_MODELS = (
+    Log,
+    Attendance,
+    Membership,
+    MemberRoutine,
+    SplitDay,
+    Target,
+    BodyWeight,
+    PlanDay,
+    PasswordChange,
+)
+
+
 def delete_member(db: Session, member: User) -> None:
     """Permanently remove a member and everything belonging to them.
 
@@ -460,18 +479,18 @@ def delete_member(db: Session, member: User) -> None:
         raise Forbidden("Archive the member before deleting them permanently")
 
     uid = member.id
-    # Children first, then rows that merely reference the user.
+    # PlanItem hangs off PlanDay, not the user -- clear it before its parent
+    # (Postgres enforces the FK; SQLite doesn't, but we behave the same on both).
     db.execute(
         delete(PlanItem).where(
             PlanItem.plan_day_id.in_(select(PlanDay.id).where(PlanDay.user_id == uid))
         )
     )
-    for model in (PlanDay, SplitDay, MemberRoutine, Target, BodyWeight, Attendance,
-                  Membership, Log):
+    for model in USER_OWNED_MODELS:
         db.execute(delete(model).where(model.user_id == uid))
-    db.execute(delete(PasswordChange).where(PasswordChange.user_id == uid))
-    # Audit rows this member wrote about someone else lose their author, not
-    # the record that a change happened.
+    # Audit rows this member wrote about *someone else* lose their author, not
+    # the record that a change happened -- that evidence belongs to the other
+    # account's history. (Their own PasswordChange rows were deleted just above.)
     db.execute(
         update(PasswordChange)
         .where(PasswordChange.changed_by_user_id == uid)

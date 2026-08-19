@@ -358,3 +358,198 @@ def test_members_page_shows_archive_for_active_and_restore_for_archived(client):
     assert f"/members/{user_id_by_email('amy@example.com')}/archive" in page.text
     assert f"/members/{user_id_by_email('al@example.com')}/restore" in page.text
     assert ">archived<" in page.text
+
+
+# ======================================================================
+# Phase 3 — permanent deletion (the irreversible second step)
+#
+# Deletion is only reachable once a member is archived. When it runs it must
+# remove the member and EVERY row they own, leave every other member wholly
+# intact, and preserve audit evidence that lives in someone else's history.
+# The most important test here is the orphan-trap guard: it protects future
+# contributors from adding a user-owned table and forgetting to delete it.
+# ======================================================================
+
+
+def _seed_full_history(uid):
+    """Give a member exactly one row in every user-owned table (+ a PlanItem).
+
+    Inserted directly (not via routes) so the test states plainly which tables
+    it expects delete_member to clear.
+    """
+    from datetime import date
+
+    from app.database import SessionLocal
+    from app.models import (
+        Attendance, BodyPart, BodyWeight, Exercise, Log, MemberRoutine,
+        Membership, PasswordChange, PasswordChangeMethod, PlanDay, PlanItem,
+        SplitDay, Target,
+    )
+
+    with SessionLocal() as s:
+        eid = s.scalar(select(Exercise.id))
+        s.add_all([
+            Log(user_id=uid, exercise_id=eid, date=date.today(), weight=50.0, reps=5, sets=3),
+            Attendance(user_id=uid, date=date.today()),
+            Membership(user_id=uid, plan_start=date.today(), duration_months=1,
+                       expires_on=date.today()),
+            MemberRoutine(user_id=uid, exercise_id=eid, body_part=BodyPart.chest),
+            SplitDay(user_id=uid, weekday=0, body_part=BodyPart.chest),
+            Target(user_id=uid, exercise_id=eid, target_weight=60.0, target_date=date.today()),
+            BodyWeight(user_id=uid, date=date.today(), weight_kg=70.0),
+            PasswordChange(user_id=uid, changed_by_user_id=uid,
+                           method=PasswordChangeMethod.self_service),
+        ])
+        pd = PlanDay(user_id=uid, weekday=0)
+        s.add(pd)
+        s.flush()
+        s.add(PlanItem(plan_day_id=pd.id, exercise_id=eid))
+        s.commit()
+
+
+def _history_counts(uid):
+    """Rows still owned by a user id, per user-owned table (fresh session)."""
+    from sqlalchemy import func
+
+    from app import crud
+    from app.database import SessionLocal
+
+    with SessionLocal() as s:
+        return {
+            m.__tablename__: s.scalar(
+                select(func.count()).select_from(m).where(m.user_id == uid)
+            )
+            for m in crud.USER_OWNED_MODELS
+        }
+
+
+def test_delete_member_handles_every_table_that_references_a_user(client):
+    """Orphan-trap guard -- the test the handoff calls the one that protects
+    future contributors. It reflects the schema for any table with a user_id
+    column and fails if crud.USER_OWNED_MODELS doesn't cover it. Without this,
+    a new user-owned table added months from now would silently leave orphaned
+    rows behind every deletion, and nothing would notice."""
+    from app import crud
+    from app.models import Base
+
+    handled = {m.__tablename__ for m in crud.USER_OWNED_MODELS}
+    with_user_id = {
+        t.name for t in Base.metadata.tables.values() if "user_id" in t.columns
+    }
+    missing = with_user_id - handled
+    assert not missing, (
+        f"crud.delete_member() ignores tables with a user_id column: {missing}. "
+        f"Add them to crud.USER_OWNED_MODELS or a deleted member orphans their rows."
+    )
+
+
+def test_deleting_an_archived_member_wipes_all_their_data(client):
+    """The whole contract of permanent deletion: the user and every row they
+    own -- across all nine tables, plus the PlanItem hanging off their PlanDay --
+    are gone. If any count is non-zero, deletion is leaking orphans."""
+    register_trainer(client)
+    add_member(client, name="Full History", email="fh@example.com")
+    mid = user_id_by_email("fh@example.com")
+    _seed_full_history(mid)
+
+    before = _history_counts(mid)
+    assert all(v >= 1 for v in before.values()), f"seed incomplete: {before}"
+
+    client.post(f"/members/{mid}/archive")
+    r = client.post(f"/members/{mid}/delete",
+                    data={"confirm_name": "Full History"}, follow_redirects=False)
+    assert r.status_code == 303 and "reset_ok" in r.headers["location"]
+
+    assert user_id_by_email("fh@example.com") is None
+    after = _history_counts(mid)
+    assert after == {t: 0 for t in after}, f"orphans left behind: {after}"
+
+    # The PlanItem (no user_id of its own) went with its parent PlanDay.
+    from sqlalchemy import func
+
+    from app.database import SessionLocal
+    from app.models import PlanItem
+
+    with SessionLocal() as s:
+        assert s.scalar(select(func.count()).select_from(PlanItem)) == 0
+
+
+def test_deleting_one_member_leaves_other_members_data_intact(client):
+    """Deletion must be surgical. Seed two members with identical full histories,
+    delete one, and the other's rows must all survive. A red test means deletion
+    is over-reaching across accounts -- catastrophic on real data."""
+    register_trainer(client)
+    add_member(client, name="Doomed", email="doomed@example.com")
+    add_member(client, name="Keeper", email="keeper@example.com")
+    did = user_id_by_email("doomed@example.com")
+    kid = user_id_by_email("keeper@example.com")
+    _seed_full_history(did)
+    _seed_full_history(kid)
+
+    client.post(f"/members/{did}/archive")
+    client.post(f"/members/{did}/delete", data={"confirm_name": "Doomed"})
+
+    assert _history_counts(did) == {t: 0 for t in _history_counts(did)}
+    keeper = _history_counts(kid)
+    assert all(v >= 1 for v in keeper.values()), f"keeper lost data: {keeper}"
+    assert user_id_by_email("keeper@example.com") == kid
+
+
+def test_deleting_a_member_nulls_audit_rows_they_authored_for_others(client):
+    """A deleted member may be the *author* (changed_by_user_id) of a password
+    change recorded against ANOTHER account. That audit row belongs to the other
+    account's history: it must survive with its author cleared, never be deleted.
+    A red test means deleting one member erases evidence from another's record."""
+    register_trainer(client)
+    add_member(client, name="Author Gone", email="author@example.com")
+    add_member(client, name="Subject Stays", email="subject@example.com")
+    aid = user_id_by_email("author@example.com")
+    sid = user_id_by_email("subject@example.com")
+
+    from app.database import SessionLocal
+    from app.models import PasswordChange, PasswordChangeMethod
+
+    with SessionLocal() as s:
+        s.add(PasswordChange(user_id=sid, changed_by_user_id=aid,
+                             method=PasswordChangeMethod.trainer))
+        s.commit()
+
+    client.post(f"/members/{aid}/archive")
+    client.post(f"/members/{aid}/delete", data={"confirm_name": "Author Gone"})
+
+    with SessionLocal() as s:
+        row = s.scalar(select(PasswordChange).where(PasswordChange.user_id == sid))
+        assert row is not None, "the subject's audit row was wrongly deleted"
+        assert row.changed_by_user_id is None, "the deleted author was not cleared"
+
+
+def test_delete_refuses_a_wrong_or_empty_confirmation_name(client):
+    """Even on an archived member, the typed name must match exactly. This is the
+    last guard before an irreversible action; a mistyped or empty box must be a
+    no-op, not a deletion."""
+    register_trainer(client)
+    add_member(client, name="Careful Carl", email="carl@example.com")
+    mid = user_id_by_email("carl@example.com")
+    client.post(f"/members/{mid}/archive")
+
+    for bad in ("wrong name", "", "   "):
+        r = client.post(f"/members/{mid}/delete",
+                        data={"confirm_name": bad}, follow_redirects=False)
+        assert r.status_code == 303 and "reset_error" in r.headers["location"]
+        assert user_id_by_email("carl@example.com") == mid, f"deleted on {bad!r}"
+
+
+def test_delete_control_is_shown_only_for_archived_members(client):
+    """The two-step rule made visible: the permanent-delete form renders on an
+    archived member's row and NOT on an active one. If it appears on an active
+    row, the one-tap delete we removed has returned to the UI."""
+    register_trainer(client)
+    add_member(client, name="Active One", email="a1@example.com")
+    add_member(client, name="Archived One", email="a2@example.com")
+    aid = user_id_by_email("a1@example.com")
+    zid = user_id_by_email("a2@example.com")
+    client.post(f"/members/{zid}/archive")
+
+    page = client.get("/members").text
+    assert f"/members/{zid}/delete" in page, "no delete control on the archived member"
+    assert f"/members/{aid}/delete" not in page, "delete control leaked onto an active member"

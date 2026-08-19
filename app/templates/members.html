@@ -83,6 +83,19 @@
                   onsubmit="return confirm('Restore {{ row.user.name }}? They will be able to sign in again.')">
               <button type="submit" class="btn ghost" style="padding:6px 12px;font-size:13px">Restore</button>
             </form>
+            <details class="resetpw">
+              <summary class="btn danger" style="padding:6px 12px;font-size:13px">Delete forever</summary>
+              <form method="post" action="/members/{{ row.user.id }}/delete" class="resetpw-form">
+                <label>This <strong>permanently</strong> deletes <strong>{{ row.user.name }}</strong>
+                  and <strong>all</strong> their logs, attendance, memberships, routines, splits,
+                  targets and body-weight records. It <strong>cannot be undone</strong> — Restore
+                  instead if there's any chance they'll return.<br><br>
+                  Type <strong>{{ row.user.name }}</strong> to confirm:</label>
+                <input type="text" name="confirm_name" required autocomplete="off"
+                       placeholder="{{ row.user.name }}">
+                <button type="submit" class="btn danger" style="width:100%">Delete permanently</button>
+              </form>
+            </details>
             {% endif %}
           {% endif %}
         </td>

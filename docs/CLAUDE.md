@@ -79,7 +79,9 @@ They share schema but never share data. `config.py` auto-rewrites Render's `post
 ## 9. Key routes (web, `app/routers/web.py`)
 - `/login` `/register` `/logout` — auth (email validated via `email-validator`; rejects `x@g`, `ada@12`, etc.).
 - `/dashboard` — trainer roster or member/one-member log view. `?view=new` filters to the first-90-days cohort.
-- `/library`, `/split`, `/logs/new`, `/logs/{id}/edit|delete`, `/progress`.
+- `/library` (GET) and `/library/{body_part}` (POST) — pick the exercises in a routine; `/library/remove/{exercise_id}` (POST) drops one. All accept `?user_id=`/`user_id=` for a trainer editing a member.
+- `/split` (GET/POST), `/logs/new`, `/logs/{id}/edit|delete`, `/progress`.
+- `/planner` (GET), `/planner/{weekday}/focus` (POST), `/planner/{weekday}/item` (POST), `/planner/item/{item_id}/delete` (POST) — **the legacy weekly planner, trainer-only in nav.** Superseded for members by Weekly Split + Exercise Library; kept only so existing `PlanDay`/`PlanItem` rows stay reachable. **Scheduled for removal** (see §13).
 - `/members` (trainer): list + create member accounts.
 - `/members/{user_id}/membership` POST (trainer): record a membership term.
 - `/membership/{id}/paid` POST, `/membership/{id}/delete` POST (trainer).

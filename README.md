@@ -71,9 +71,9 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-76 tests, about two minutes. Each gets its own throwaway database and never
-touches your `gym.db`. They also run automatically on every push via GitHub
-Actions. See [`tests/README.md`](tests/README.md).
+98 tests, about two–three minutes. Each gets its own throwaway database and
+never touches your `gym.db`. They also run automatically on every push via
+GitHub Actions. See [`tests/README.md`](tests/README.md).
 
 ## Documentation
 

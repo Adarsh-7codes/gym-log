@@ -33,7 +33,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-76 tests. If they are green, the app is in the state this documentation
+98 tests. If they are green, the app is in the state this documentation
 describes. If any are red, **read the test name before changing anything** —
 several exist to protect a decision, not a behaviour.
 

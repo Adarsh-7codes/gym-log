@@ -1,1 +1,7 @@
 pytest==9.1.1
+# Required by FastAPI's TestClient (starlette.testclient). Without it the whole
+# suite errors at fixture setup with "requires the httpx package". It passed on
+# some machines only because another tool had installed httpx globally; CI, with
+# a clean install, had no httpx and every test failed. Declared here so the test
+# environment is reproducible.
+httpx==0.28.1
